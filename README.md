@@ -62,34 +62,48 @@ A.X.I.S. is an AI-powered document automation platform that helps users complete
 
 ---
 
-## Installation
+## 🛠️ Developer Setup Guide
 
-### Frontend
+To get the A.X.I.S. platform running locally, follow these steps:
 
-npm install
+### 1. Prerequisites
+* **Python 3.10+**
+* **Node.js 18+**
+* **PostgreSQL**
 
-npm run dev
+### 2. Backend Setup
+1. Navigate to the backend directory: `cd backend`
+2. Create a virtual environment: `python -m venv venv`
+3. Activate it:
+   * Windows: `source venv/Scripts/activate`
+   * Linux/Mac: `source venv/bin/activate`
+4. Install dependencies: `pip install -r requirements.txt`
+5. Create a `.env` file in the `backend/` folder and add your API keys (see Environment Variables section below).
 
-### Backend
+### 3. Frontend Setup
+1. Navigate to the frontend directory: `cd frontend`
+2. Install dependencies: `npm install`
+3. Run the development server: `npm run dev`
 
-pip install -r requirements.txt
-
-uvicorn app.main:app --reload
+### 4. Database Setup
+1. Ensure PostgreSQL is running.
+2. Execute the `init_schema.sql` script in your local database to create the necessary tables and policies.
 
 ---
 
 ## Environment Variables
 
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
+Create a `.env` file in your root/project directories:
 
-DATABASE_URL=
+**Backend:**
+`DATABASE_URL=`
+`GEMINI_API_KEY=`
+`GROQ_API_KEY=`
+`HF_API_KEY=`
 
-GEMINI_API_KEY=
-GROQ_API_KEY=
-HF_API_KEY=
-
-REDIS_URL=
+**Frontend:**
+`NEXT_PUBLIC_SUPABASE_URL=`
+`NEXT_PUBLIC_SUPABASE_ANON_KEY=`
 
 ---
 
