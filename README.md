@@ -23,30 +23,24 @@ A.X.I.S. is an AI-powered document automation platform that helps users complete
 ## Tech Stack
 
 ### Frontend
-
 * Next.js
 * Tailwind CSS
   
 ### Backend
-
 * FastAPI
 * Python
 
 ### Database
-
 * PostgreSQL
 * Supabase
 
 ### AI Services
-
 * Google Gemini
 * Groq
 * Hugging Face
 
 ### Storage
-
 * Supabase Storage
-
 
 ---
 
@@ -78,12 +72,13 @@ To get the A.X.I.S. platform running locally, follow these steps:
    * Windows: `source venv/Scripts/activate`
    * Linux/Mac: `source venv/bin/activate`
 4. Install dependencies: `pip install -r requirements.txt`
-5. Create a `.env` file in the `backend/` folder and add your API keys (see Environment Variables section below).
+5. **Configuration:** Copy the `backend/.env.example` to `backend/.env` and populate your API keys and database URL.
 
 ### 3. Frontend Setup
 1. Navigate to the frontend directory: `cd frontend`
 2. Install dependencies: `npm install`
-3. Run the development server: `npm run dev`
+3. **Configuration:** Copy the `frontend/.env.example` to `frontend/.env` and populate your Supabase keys.
+4. Run the development server: `npm run dev`
 
 ### 4. Database Setup
 1. Ensure PostgreSQL is running.
@@ -93,17 +88,12 @@ To get the A.X.I.S. platform running locally, follow these steps:
 
 ## Environment Variables
 
-Create a `.env` file in your root/project directories:
+This project uses separate environment configurations for security:
 
-**Backend:**
-`DATABASE_URL=`
-`GEMINI_API_KEY=`
-`GROQ_API_KEY=`
-`HF_API_KEY=`
+* **Backend (.env):** Contains database credentials and private AI API keys (Gemini/Groq/HF).
+* **Frontend (.env):** Contains public Supabase keys and API connection strings.
 
-**Frontend:**
-`NEXT_PUBLIC_SUPABASE_URL=`
-`NEXT_PUBLIC_SUPABASE_ANON_KEY=`
+*Refer to the `.env.example` files located in the `backend/` and `frontend/` directories for required keys.*
 
 ---
 
