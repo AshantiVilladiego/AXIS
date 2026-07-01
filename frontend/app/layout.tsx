@@ -1,3 +1,16 @@
+import React from 'react'
+import type { Metadata } from 'next'
+import { Inter } from 'next/font/google'
+import './globals.css'
+
+// This automatically optimizes the font and prevents layout shifts
+const inter = Inter({ subsets: ['latin'] })
+
+export const metadata: Metadata = {
+  title: 'A.X.I.S. | Document Extraction',
+  description: 'Automated eXtraction & Integration System',
+}
+
 export default function RootLayout({
   children,
 }: {
@@ -5,7 +18,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body className={inter.className}>{children}</body>
     </html>
   )
 }
