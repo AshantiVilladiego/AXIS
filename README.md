@@ -23,23 +23,28 @@ A.X.I.S. is an AI-powered document automation platform that helps users complete
 ## Tech Stack
 
 ### Frontend
+
 * Next.js
 * Tailwind CSS
-  
+
 ### Backend
+
 * FastAPI
 * Python
 
 ### Database
+
 * PostgreSQL
 * Supabase
 
 ### AI Services
+
 * Google Gemini
 * Groq
 * Hugging Face
 
 ### Storage
+
 * Supabase Storage
 
 ---
@@ -60,29 +65,59 @@ A.X.I.S. is an AI-powered document automation platform that helps users complete
 
 To get the A.X.I.S. platform running locally, follow these steps:
 
-### 1. Prerequisites
-* **Python 3.10+**
-* **Node.js 18+**
-* **PostgreSQL**
+### 0. Fetch the Changes
 
-### 2. Backend Setup
-1. Navigate to the backend directory: `cd backend`
-2. Create a virtual environment: `python -m venv venv`
-3. Activate it:
-   * Windows: `source venv/Scripts/activate`
-   * Linux/Mac: `source venv/bin/activate`
-4. Install dependencies: `pip install -r requirements.txt`
-5. **Configuration:** Copy the `backend/.env.example` to `backend/.env` and populate your API keys and database URL.
+```bash
+# Pull the latest work from the branch
+git pull origin [branch name]
 
-### 3. Frontend Setup
-1. Navigate to the frontend directory: `cd frontend`
-2. Install dependencies: `npm install`
-3. **Configuration:** Copy the `frontend/.env.example` to `frontend/.env` and populate your Supabase keys.
-4. Run the development server: `npm run dev`
+```
 
-### 4. Database Setup
-1. Ensure PostgreSQL is running.
-2. Execute the `init_schema.sql` script in your local database to create the necessary tables and policies.
+### 1. Backend Setup
+
+```bash
+# Move into the backend directory
+cd backend
+
+# Create & Activate Virtual Environment
+python -m venv venv
+source venv/Scripts/activate  # (Use .\venv\Scripts\activate on Windows)
+
+# Install & Configure
+pip install -r requirements.txt
+cp .env.example .env
+# [Action: Fill in your local API keys in .env]
+
+```
+
+### 2. Frontend Setup
+
+```bash
+# Move to root, then frontend
+cd ..
+cd frontend
+
+# Install & Configure
+npm install
+cp .env.example .env
+# [Action: Fill in your Supabase keys in .env]
+
+```
+
+### 3. Database Setup
+
+Our DB engineer has already initialized the schema in Supabase. You do not need to run any local scripts; simply ensure your local `.env` files (both backend and frontend) are updated with the connection details from our existing Supabase project.
+
+### 4. Verification
+
+To ensure both services are running correctly:
+
+**Backend:** Start the server with `uvicorn app.main:app --reload` (from inside the `backend/` folder).
+
+* Verify connectivity: Visit `[http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health)`. You should receive a successful JSON response.
+* View API documentation: Visit `[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)`
+
+**Frontend:** Start the server with `npm run dev` (from inside the `frontend/` folder). You should see the application running on `http://localhost:3000`.
 
 ---
 
