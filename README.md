@@ -8,15 +8,15 @@ A.X.I.S. is an AI-powered document automation platform that helps users complete
 
 ## Features
 
-* User Authentication
-* Secure Profile Management
-* Government Form Upload
-* OCR & Document Parsing
-* AI-Powered Field Mapping
-* Pre-filled PDF Generation
-* Guided Form Completion
-* Processing History Dashboard
-* Multi-Provider AI Failover
+- User Authentication
+- Secure Profile Management
+- Government Form Upload
+- OCR & Document Parsing
+- AI-Powered Field Mapping
+- Pre-filled PDF Generation
+- Guided Form Completion
+- Processing History Dashboard
+- Multi-Provider AI Failover
 
 ---
 
@@ -24,28 +24,28 @@ A.X.I.S. is an AI-powered document automation platform that helps users complete
 
 ### Frontend
 
-* Next.js
-* Tailwind CSS
+- Next.js
+- Tailwind CSS
 
 ### Backend
 
-* FastAPI
-* Python
+- FastAPI
+- Python
 
 ### Database
 
-* PostgreSQL
-* Supabase
+- PostgreSQL
+- Supabase
 
 ### AI Services
 
-* Google Gemini
-* Groq
-* Hugging Face
+- Google Gemini
+- Groq
+- Hugging Face
 
 ### Storage
 
-* Supabase Storage
+- Supabase Storage
 
 ---
 
@@ -106,7 +106,9 @@ cp .env.example .env
 
 ### 3. Database Setup
 
-Our DB engineer has already initialized the schema in Supabase. You do not need to run any local scripts; simply ensure your local `.env` files (both backend and frontend) are updated with the connection details from our existing Supabase project.
+Our DB engineer has already initialized the schema in Supabase. Use the shared cloud PostgreSQL connection string from the existing Supabase project in `backend/.env`, so everyone on the team points to the same hosted database during development.
+
+The backend is configured to use SSL automatically for hosted database hosts such as Supabase, so no local PostgreSQL installation is required.
 
 ### 4. Verification
 
@@ -114,8 +116,9 @@ To ensure both services are running correctly:
 
 **Backend:** Start the server with `uvicorn app.main:app --reload` (from inside the `backend/` folder).
 
-* Verify connectivity: Visit `[http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health)`. You should receive a successful JSON response.
-* View API documentation: Visit `[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)`
+- Verify connectivity: Visit `[http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health)`. You should receive a successful JSON response.
+- Verify database access: Visit `[http://127.0.0.1:8000/api/db-check](http://127.0.0.1:8000/api/db-check)`. You should receive `database: connected` when the cloud database is reachable.
+- View API documentation: Visit `[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)`
 
 **Frontend:** Start the server with `npm run dev` (from inside the `frontend/` folder). You should see the application running on `http://localhost:3000`.
 
@@ -125,10 +128,11 @@ To ensure both services are running correctly:
 
 This project uses separate environment configurations for security:
 
-* **Backend (.env):** Contains database credentials and private AI API keys (Gemini/Groq/HF).
-* **Frontend (.env):** Contains public Supabase keys and API connection strings.
+- **Root `.env.example`:** Reference only. It shows the full split of backend and frontend variables in one place.
+- **Backend `backend/.env`:** Private server-side settings such as `DATABASE_URL`, Supabase service keys, and AI API keys.
+- **Frontend `frontend/.env`:** Public browser-safe settings such as `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `NEXT_PUBLIC_API_URL`.
 
-*Refer to the `.env.example` files located in the `backend/` and `frontend/` directories for required keys.*
+Use the matching `.env.example` file in each folder as the template for the actual `.env` file.
 
 ---
 

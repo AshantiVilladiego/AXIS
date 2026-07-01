@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
 import logging
+import ssl
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.engine import make_url
@@ -21,11 +22,27 @@ def _build_async_database_url(database_url: str) -> str:
 	return str(url)
 
 
+def _build_connect_args(database_url: str) -> dict:
+	"""Use SSL for hosted PostgreSQL providers like Supabase."""
+	url = make_url(database_url)
+	host = (url.host or "").lower()
+
+	if not host:
+		return {}
+
+	if host in {"localhost", "127.0.0.1"} or host.endswith(".local"):
+		return {}
+
+	return {"ssl": ssl.create_default_context()}
+
+
 DATABASE_URL = _build_async_database_url(settings.database_url)
+CONNECT_ARGS = _build_connect_args(settings.database_url)
 
 engine = create_async_engine(
 	DATABASE_URL,
 	echo=settings.environment.lower() == "development",
+	connect_args=CONNECT_ARGS,
 	pool_pre_ping=True,
 )
 

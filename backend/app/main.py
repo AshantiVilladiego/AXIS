@@ -16,3 +16,12 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+
+
+@app.get("/")
+async def root():
+    return {
+        "message": "A.X.I.S. Backend is running",
+        "health_check": "/api/health",
+        "docs": "/docs",
+    }
