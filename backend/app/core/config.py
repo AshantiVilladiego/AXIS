@@ -18,6 +18,7 @@ class Settings(BaseSettings):
 
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
+    hf_api_key: str | None = Field(default=None, alias="HF_API_KEY")
 
     supabase_url: str | None = Field(default=None, alias="SUPABASE_URL")
     supabase_anon_key: str | None = Field(default=None, alias="SUPABASE_ANON_KEY")

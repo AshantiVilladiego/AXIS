@@ -13,7 +13,7 @@ document_service = DocumentService()
 @router.post("/upload")
 async def upload_document(
 	file: UploadFile = File(...),
-	form_type: str = Form(...),
+	form_type: str = Form("auto"),
 ):
 	"""
 	Receives a document from the Next.js frontend and processes it using the AI adapter.
@@ -35,7 +35,7 @@ async def process_form(form_id: str):
 
 		adapter = GeminiAdapter()
 		dummy_data = b"some_file_bytes"
-		result = await adapter.process_document(dummy_data)
+		result = await adapter.process_document(dummy_data, "application/octet-stream")
 		return {"status": "success", "result": result}
 	except Exception as exc:
 		logger.exception("Legacy process failed for form_id=%s", form_id)

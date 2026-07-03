@@ -4,3 +4,7 @@ python-dotenv
 asyncpg
 sqlalchemy
 pydantic-settings
+python-multipart
+google-genai
+groq
+huggingface_hub
