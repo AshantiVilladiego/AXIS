@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { UploadResponse } from '../types/api'; 
 
 interface UploadFormProps {
   apiStatus?: string;
@@ -13,31 +14,51 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
   const [isUploading, setIsUploading] = useState(false);
   const [formType, setFormType] = useState('auto');
   const [isDragging, setIsDragging] = useState(false);
+  const [uploadResult, setUploadResult] = useState<UploadResponse | null>(null);
+  
+  // NEW: State to hold the temporary local URL for the PDF/Image preview
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // NEW: Automatically generate a preview URL whenever a file is selected
+  useEffect(() => {
+    if (!selectedFile) {
+      setPreviewUrl(null);
+      return;
+    }
+    
+    // Create a local memory link to the file
+    const objectUrl = URL.createObjectURL(selectedFile);
+    setPreviewUrl(objectUrl);
+
+    // Free memory when the component unmounts or the file changes
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [selectedFile]);
   
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault(); // Stops the browser from opening the PDF
-    setIsDragging(true); // Triggers the visual highlight
+    e.preventDefault();
+    setIsDragging(true);
   };
 
   const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    setIsDragging(false); // Removes the highlight when they drag away
+    setIsDragging(false);
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
-    
-    // Grab the file from the drag event instead of the click event
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       setSelectedFile(e.dataTransfer.files[0]);
+      setUploadResult(null); 
     }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setSelectedFile(e.target.files[0]);
+      setUploadResult(null); 
     }
   };
 
@@ -45,10 +66,10 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
     if (!selectedFile) return;
     
     setIsUploading(true);
+    setUploadResult(null); 
+    
     const formData = new FormData();
     formData.append("file", selectedFile);
-    
-    // Send the selected form type to the backend
     formData.append("form_type", formType); 
 
     try {
@@ -57,20 +78,20 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
         body: formData,
       });
       
-      // NEW: Explicit error checking so the UI doesn't hang
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`Server returned ${response.status}: ${errorText}`);
       }
       
-      const data = await response.json();
+      const data: UploadResponse = await response.json();
       console.log("Backend Response:", data);
-      alert(`Success! Backend received: ${data.filename}\nAssigned Type: ${data.form_type}`);
+      
+      setUploadResult(data);
+      
     } catch (error) {
       console.error("Upload error:", error);
       alert("Upload failed. Check the console for details.");
     } finally {
-      // This will now always execute, resetting the button
       setIsUploading(false); 
     }
   };
@@ -93,7 +114,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
         </div>
       </div>
 
-      {/* --- NEW: Form Type Selector --- */}
+      {/* Form Type Selector */}
       <div className="bg-white p-4 border border-slate-200 rounded-xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h3 className="text-sm font-semibold text-slate-800">Document Classification</h3>
@@ -151,7 +172,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
               disabled={isUploading || isOffline}
               className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-medium rounded-lg transition-colors"
             >
-              {isUploading ? 'Uploading to A.X.I.S...' : 'Process Document'}
+              {isUploading ? 'Extracting via AI...' : 'Process Document'}
             </button>
           </div>
         ) : (
@@ -178,28 +199,69 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
         </h3>
         
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          
+          {/* UPDATED: Document Preview Panel */}
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col h-125">
             <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Document Preview</span>
-              <span className="text-xs font-medium text-slate-400">Awaiting file...</span>
+              <span className="text-xs font-medium text-slate-400">
+                {uploadResult ? uploadResult.form_type : selectedFile ? "Ready" : "Awaiting file..."}
+              </span>
             </div>
-            <div className="flex-1 flex items-center justify-center bg-slate-100/50">
-               <p className="text-sm text-slate-400">No document uploaded yet</p>
+            <div className="flex-1 bg-slate-100/50 relative">
+              {previewUrl ? (
+                selectedFile?.type.startsWith('image/') ? (
+                  <img src={previewUrl} alt="Document preview" className="w-full h-full object-contain p-2 absolute inset-0" />
+                ) : (
+                  <iframe src={`${previewUrl}#toolbar=0`} className="w-full h-full border-0 absolute inset-0" title="PDF Preview" />
+                )
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <p className="text-sm text-slate-400">No document uploaded yet</p>
+                </div>
+              )}
             </div>
           </div>
 
+          {/* Extracted Fields Panel */}
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col h-125">
             <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Extracted Fields</span>
-              <span className="text-xs font-medium text-slate-400 flex items-center gap-1">⚡ AI Confidence</span>
+              <span className={`text-xs font-medium flex items-center gap-1 ${uploadResult?.status === 'success' ? 'text-emerald-500' : 'text-slate-400'}`}>
+                ⚡ AI Confidence
+              </span>
             </div>
             <div className="flex-1 p-6 space-y-4 overflow-y-auto">
-              {['Full Name', 'Taxpayer ID (TIN)', 'Birth Date', 'Address'].map((field) => (
-                <div key={field} className="bg-slate-50 rounded-lg p-3 border border-slate-100">
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">{field}</label>
-                  <p className="text-sm text-slate-400 font-medium">Awaiting extraction...</p>
-                </div>
-              ))}
+              
+              {uploadResult?.extracted_data ? (
+                Object.entries(
+                  uploadResult.extracted_data.data || uploadResult.extracted_data
+                ).map(([key, value]) => (
+                  <div key={key} className="bg-emerald-50 rounded-lg p-3 border border-emerald-100 transition-all">
+                    <label className="block text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-1">
+                      {key.replace(/_/g, ' ')}
+                    </label>
+                    <p className="text-sm text-slate-800 font-medium whitespace-pre-wrap">
+                      {typeof value === 'object' && value !== null 
+                        ? JSON.stringify(value, null, 2).replace(/["{}]/g, '') 
+                        : String(value)}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                ['Full Name', 'Taxpayer ID (TIN)', 'Birth Date', 'Address'].map((field) => (
+                  <div key={field} className="bg-slate-50 rounded-lg p-3 border border-slate-100">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">{field}</label>
+                    <p className="text-sm text-slate-400 font-medium flex items-center gap-2">
+                      {isUploading && (
+                        <span className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></span>
+                      )}
+                      {isUploading ? "Extracting via AI..." : "Awaiting extraction..."}
+                    </p>
+                  </div>
+                ))
+              )}
+
             </div>
           </div>
         </div>

@@ -10,6 +10,11 @@ interface HistoryRecord {
   status: 'Success' | 'Error';
 }
 
+
+// TODO: Phase 3 Integration
+// Currently using mock data. The backend "Processing History" endpoint is pending 
+// because data persistence to Supabase is blocked by schema mismatches (Backend Blocker A).
+// Once GET /api/history is live, replace this mock array with a useEffect fetch call.
 export default function ProcessingHistory() {
   // Mock data matching your exact Figma design
   const mockData: HistoryRecord[] = [
