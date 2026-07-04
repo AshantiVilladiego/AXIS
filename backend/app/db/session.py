@@ -97,6 +97,12 @@ def _make_url_safely(url_string: str) -> URL:
 
 DATABASE_URL, CONNECT_ARGS = _build_engine_setup()
 
+# --- THE PGBOUNCER FIX ---
+# Supabase uses PgBouncer on port 6543, which crashes if asyncpg tries to cache statements.
+# Injecting this into your existing args safely disables caching in all environments.
+CONNECT_ARGS["statement_cache_size"] = 0
+# -------------------------
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=settings.environment.lower() == "development",
