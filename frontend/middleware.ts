@@ -41,11 +41,10 @@ export async function middleware(request: NextRequest) {
   // Redirect logic:
   // 1. If user is NOT logged in and tries to access /dashboard, redirect to /login
   if (!session && request.nextUrl.pathname.startsWith('/dashboard')) {
-    return NextResponse.redirect(new URL('/login', request.url));
+    return NextResponse.redirect(new URL('/', request.url));
   }
 
   // 2. If user IS logged in and tries to access /login, redirect to /dashboard
-  // This prevents logged-in users from seeing the login screen again
   if (session && request.nextUrl.pathname.startsWith('/login')) {
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
@@ -57,13 +56,9 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * Feel free to add more to this list as needed.
+     * Match protected routes only.
+     * We REMOVED '/' from here so it remains public.
      */
     '/dashboard/:path*',
-    '/login',
   ],
 };
