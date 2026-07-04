@@ -21,6 +21,9 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Refactored to use environment variable
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
   // NEW: Automatically generate a preview URL whenever a file is selected
   useEffect(() => {
     if (!selectedFile) {
@@ -73,7 +76,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
     formData.append("form_type", formType); 
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/upload", {
+      const response = await fetch(`${API_BASE_URL}/api/upload`, {
         method: "POST",
         body: formData,
       });
