@@ -56,7 +56,16 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
       <div>
         <div className={`h-16 flex items-center border-b border-slate-800 px-4 ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
           {!isCollapsed && (
-            <div className="flex items-center gap-2 font-black text-xl text-white tracking-wider transition-opacity duration-200">
+            <div className="flex items-center gap-3 font-black text-xl text-white tracking-wider transition-opacity duration-200">
+              
+              {/* --- EDIT LOGO SIZE HERE --- */}
+              {/* Change h-8 to h-10 (40px) or h-12 (48px) to make it even bigger */}
+              <img 
+                src="/logo_nobg_inv2.png" 
+                alt="AXIS Logo" 
+                className="h-12 w-auto object-contain" 
+              />
+              
               <span className="text-blue-500">A.X.I.S.</span>
             </div>
           )}
