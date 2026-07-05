@@ -69,27 +69,7 @@ class DocumentService:
             )
             normalized_data = self._normalize_extraction(extracted_data)
 
-            # --- DATABASE STORAGE PHASE ---
-            new_form_id = uuid.uuid4()
-            file_url_placeholder = f"https://axis-storage.local/{file.filename.replace(' ', '_')}"
-
-            form_query = text("""
-                INSERT INTO forms (id, user_id, filename, file_url)
-                VALUES (:id, :user_id, :filename, :file_url)
-            """)
-
-            await db.execute(form_query, {
-                "id": new_form_id,
-                "user_id": resolved_user_id,
-                "filename": file.filename,
-                "file_url": file_url_placeholder
-            })
-
-            field_query = text("""
-                INSERT INTO extracted_fields (id, form_id, field_name, extracted_value, confidence_score)
-                VALUES (:id, :form_id, :field_name, :extracted_value, :confidence_score)
-            """)
-
+            # --- PARSE RESULTS TO DETERMINE STATUS ---
             formatted_extracted_data = []
             ai_results = normalized_data.get("data", {})
 
@@ -105,15 +85,37 @@ class DocumentService:
                     ai_results = {"extraction_status": "Failed - Invalid AI Format"}
 
             # If the AI provider returned text that couldn't be parsed as
-            # JSON, ai_results collapses to this single sentinel key/value
-            # pair (see the json.JSONDecodeError branch above) — treat that
-            # as a failed extraction rather than a successful one with one
-            # oddly-named field.
+            # JSON, ai_results collapses to this single sentinel key/value pair.
             extraction_failed = (
                 isinstance(ai_results, dict)
                 and set(ai_results.keys()) == {"extraction_status"}
                 and ai_results.get("extraction_status") == "Failed - Invalid AI Format"
             )
+
+            db_status = "Error" if extraction_failed else "Success"
+
+            # --- DATABASE STORAGE PHASE ---
+            new_form_id = uuid.uuid4()
+            file_url_placeholder = f"https://axis-storage.local/{file.filename.replace(' ', '_')}"
+
+            form_query = text("""
+                INSERT INTO forms (id, user_id, filename, file_url, form_type, status)
+                VALUES (:id, :user_id, :filename, :file_url, :form_type, :status)
+            """)
+
+            await db.execute(form_query, {
+                "id": new_form_id,
+                "user_id": resolved_user_id,
+                "filename": file.filename,
+                "file_url": file_url_placeholder,
+                "form_type": form_type,
+                "status": db_status
+            })
+
+            field_query = text("""
+                INSERT INTO extracted_fields (id, form_id, field_name, extracted_value, confidence_score)
+                VALUES (:id, :form_id, :field_name, :extracted_value, :confidence_score)
+            """)
 
             for key, value in ai_results.items():
                 db_value = json.dumps(value) if value is not None else None
