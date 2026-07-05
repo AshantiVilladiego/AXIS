@@ -18,9 +18,18 @@ export default function ProcessingHistory() {
   const [historyData, setHistoryData] = useState<HistoryRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const { supabase } = useSupabase();
 
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+  const extractStoragePath = (fileUrl: string): string | null => {
+    const marker = '/documents/';
+    const idx = fileUrl?.indexOf(marker) ?? -1;
+    if (idx === -1) return null;
+    const path = fileUrl.slice(idx + marker.length);
+    return path || null;
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -80,6 +89,41 @@ export default function ProcessingHistory() {
     return () => { isMounted = false; };
   }, [supabase, API_BASE_URL]);
 
+  const handleDownload = async (record: HistoryRecord) => {
+    setDownloadError(null);
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      setDownloadError("You must be logged in to download files.");
+      return;
+    }
+
+    const path = extractStoragePath(record.file_url);
+    if (!path) {
+      setDownloadError("This record has no valid file path.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/history/signed-url/${path}`, {
+        headers: {
+          "Authorization": `Bearer ${session.access_token}`
+        }
+      });
+
+      if (!response.ok) {
+        setDownloadError("Failed to generate secure download link.");
+        return;
+      }
+
+      const data = await response.json();
+      window.open(data.url, '_blank');
+    } catch (err) {
+      console.error('Download failed:', err);
+      setDownloadError("Failed to generate secure download link.");
+    }
+  };
+
   return (
     <div className="flex flex-col gap-6">
       
@@ -88,6 +132,12 @@ export default function ProcessingHistory() {
         <h2 className="text-2xl font-bold tracking-tight text-slate-900">Processing History</h2>
         <p className="text-sm text-slate-500 mt-1">Audit log of all documents processed through the A.X.I.S. engine.</p>
       </div>
+
+      {downloadError && (
+        <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2">
+          {downloadError}
+        </div>
+      )}
 
       {/* Table Container */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
@@ -211,17 +261,15 @@ export default function ProcessingHistory() {
                   {/* Conditional Action */}
                   <td className="px-6 py-4 whitespace-nowrap">
                     {record.status === 'Success' ? (
-                      <a 
-                        href={record.file_url} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
+                      <button 
+                        onClick={() => handleDownload(record)}
                         className="flex items-center gap-1.5 text-sm font-semibold text-indigo-600 hover:text-indigo-800 transition-colors w-max"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
                         </svg>
                         Download
-                      </a>
+                      </button>
                     ) : (
                       <span className="text-slate-300 font-bold">—</span>
                     )}

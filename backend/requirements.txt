@@ -6,7 +6,9 @@ sqlalchemy
 pydantic-settings
 python-multipart
 pyJWT
+PyMuPDF
 certifi
+supabase
 google-genai
 groq
 huggingface_hub

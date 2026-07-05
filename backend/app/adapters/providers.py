@@ -2,8 +2,6 @@ import asyncio
 import base64
 import json
 import logging
-import re
-from io import BytesIO
 from typing import Dict, Any, List
 
 from app.adapters.base import ModelAdapter
@@ -19,37 +17,34 @@ class ProviderUnavailableError(RuntimeError):
     """Raised when a provider cannot run due to missing config or unsupported input."""
 
 
-def _extract_json_payload(text: str) -> Dict[str, Any]:
-    """Best-effort parser for model output that may include markdown fences."""
+def _parse_json_safely(text: str) -> Dict[str, Any]:
+    """
+    Enforces that the output is parseable JSON. 
+    If a model ignores native JSON mode and wraps output in markdown, it strips it.
+    If it completely hallucinates, it raises a ValueError to trigger the failover router.
+    """
     cleaned = text.strip()
     if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
+        # Strip the opening ```json and closing ```
+        lines = cleaned.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
 
     try:
         parsed = json.loads(cleaned)
-        return parsed if isinstance(parsed, dict) else {"raw": parsed}
-    except json.JSONDecodeError:
-        match = re.search(r"\{[\s\S]*\}", cleaned)
-        if match:
-            try:
-                parsed = json.loads(match.group(0))
-                return parsed if isinstance(parsed, dict) else {"raw": parsed}
-            except json.JSONDecodeError:
-                pass
-
-    return {"raw_text": text}
+        if not isinstance(parsed, dict):
+            raise ValueError("Output is valid JSON but not a dictionary object.")
+        return parsed
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Model returned invalid JSON: {e}")
 
 
 def _render_to_images(file_data: bytes, file_type: str, max_pages: int = 5) -> List[bytes]:
     """
     Converts an uploaded document into a list of PNG image bytes, one per page.
-
-    Gemini's API accepts PDF bytes directly, but Groq and HuggingFace's vision
-    chat models only accept images — so PDFs need to be rasterized first.
-    If the input is already an image, it's returned as a single-item list
-    unchanged. Capped at `max_pages` to keep multi-page government forms from
-    blowing up request payload size / token usage.
     """
     if file_type == "application/pdf":
         import fitz  # PyMuPDF
@@ -73,8 +68,8 @@ def _render_to_images(file_data: bytes, file_type: str, max_pages: int = 5) -> L
 
 EXTRACTION_PROMPT = (
     "Extract all fields from this document image. "
-    "Return a single valid JSON object only, with no markdown fences or commentary. "
-    "If a field is missing or illegible, set it to null."
+    "Return a single valid JSON object only. Do not include markdown formatting, "
+    "conversational text, or code blocks. If a field is missing or illegible, set it to null."
 )
 
 
@@ -90,9 +85,6 @@ class GeminiAdapter(ModelAdapter):
     async def process_document(self, file_data: bytes, file_type: str) -> Dict[str, Any]:
         self._ensure_ready()
 
-        # gemini-1.5-flash has been removed from the API (confirmed 404 as of
-        # July 2026) — dropped from the candidate list. gemini-2.5-flash-lite
-        # added as a cheaper/higher-quota fallback behind the two main models.
         model_candidates = [
             "gemini-2.5-flash",
             "gemini-2.0-flash",
@@ -109,11 +101,16 @@ class GeminiAdapter(ModelAdapter):
                         EXTRACTION_PROMPT,
                         types.Part.from_bytes(data=file_data, mime_type=file_type),
                     ],
-                    config=types.GenerateContentConfig(temperature=0),
+                    # Force Native Structured Output
+                    config=types.GenerateContentConfig(
+                        temperature=0,
+                        response_mime_type="application/json"
+                    ),
                 )
 
                 text = response.text or "{}"
-                parsed_payload = _extract_json_payload(text)
+                parsed_payload = _parse_json_safely(text)
+                
                 return {
                     "provider": "gemini",
                     "status": "success",
@@ -122,17 +119,9 @@ class GeminiAdapter(ModelAdapter):
                 }
             except Exception as e:
                 last_error = e
-                error_str = str(e)
-                logger.warning("Gemini model attempt failed for %s: %s", model_name, error_str)
-                # A 429 (quota exhausted) or 404 (model gone) won't be fixed by
-                # retrying the same class of model at a different tier within
-                # this account, but we still try the next candidate in case
-                # only one specific model is rate-limited/deprecated.
+                logger.warning("Gemini attempt failed for %s: %s", model_name, str(e))
                 continue
 
-        # All Gemini models failed. Treat quota/billing exhaustion as
-        # "unavailable" (so ModelRouter moves on to Groq/HF) rather than a
-        # hard crash — this is the whole point of having a router.
         raise ProviderUnavailableError(f"All Gemini models failed: {str(last_error)}")
 
     async def validate_data(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -149,7 +138,6 @@ class GroqAdapter(ModelAdapter):
 
         if self.api_key:
             from groq import Groq
-
             self.client = Groq(api_key=self.api_key)
 
     def _ensure_ready(self) -> None:
@@ -159,7 +147,6 @@ class GroqAdapter(ModelAdapter):
     async def process_document(self, file_data: bytes, file_type: str) -> Dict[str, Any]:
         self._ensure_ready()
 
-        # Groq's vision models take images, not raw PDF bytes — rasterize first.
         try:
             page_images = _render_to_images(file_data, file_type)
         except ProviderUnavailableError:
@@ -167,8 +154,6 @@ class GroqAdapter(ModelAdapter):
         except Exception as e:
             raise ProviderUnavailableError(f"Could not render document to image(s): {e}")
 
-        # Model names current as of this writing; Groq's vision lineup changes
-        # fairly often, so multiple candidates are tried in order.
         model_candidates = [
             "llama-3.2-90b-vision-preview",
             "llama-3.2-11b-vision-preview",
@@ -199,9 +184,12 @@ class GroqAdapter(ModelAdapter):
                     model=model_name,
                     messages=messages,
                     temperature=0,
+                    # Force Native Structured Output
+                    response_format={"type": "json_object"},
                 )
                 text = response.choices[0].message.content or "{}"
-                parsed_payload = _extract_json_payload(text)
+                parsed_payload = _parse_json_safely(text)
+                
                 return {
                     "provider": "groq",
                     "status": "success",
@@ -210,7 +198,7 @@ class GroqAdapter(ModelAdapter):
                 }
             except Exception as e:
                 last_error = e
-                logger.warning("Groq model attempt failed for %s: %s", model_name, str(e))
+                logger.warning("Groq attempt failed for %s: %s", model_name, str(e))
                 continue
 
         raise ProviderUnavailableError(f"All Groq models failed: {str(last_error)}")
@@ -229,7 +217,6 @@ class HFAdapter(ModelAdapter):
 
         if self.api_key:
             from huggingface_hub import InferenceClient
-
             self.client = InferenceClient(token=self.api_key)
 
     def _ensure_ready(self) -> None:
@@ -246,15 +233,8 @@ class HFAdapter(ModelAdapter):
         except Exception as e:
             raise ProviderUnavailableError(f"Could not render document to image(s): {e}")
 
-        # Only the first page is sent to HF — most Inference API vision
-        # models/providers don't yet support multi-image chat turns reliably.
-        # Good enough as a last-resort fallback; not a full replacement for
-        # Gemini's multi-page handling.
         first_page_b64 = base64.b64encode(page_images[0]).decode("utf-8")
-
-        model_candidates = [
-            "meta-llama/Llama-3.2-11B-Vision-Instruct",
-        ]
+        model_candidates = ["meta-llama/Llama-3.2-11B-Vision-Instruct"]
 
         messages = [
             {
@@ -279,7 +259,8 @@ class HFAdapter(ModelAdapter):
                     temperature=0,
                 )
                 text = response.choices[0].message.content or "{}"
-                parsed_payload = _extract_json_payload(text)
+                parsed_payload = _parse_json_safely(text)
+                
                 return {
                     "provider": "huggingface",
                     "status": "success",
@@ -288,7 +269,7 @@ class HFAdapter(ModelAdapter):
                 }
             except Exception as e:
                 last_error = e
-                logger.warning("HuggingFace model attempt failed for %s: %s", model_name, str(e))
+                logger.warning("HuggingFace attempt failed for %s: %s", model_name, str(e))
                 continue
 
         raise ProviderUnavailableError(f"All HuggingFace models failed: {str(last_error)}")

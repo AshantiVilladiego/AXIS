@@ -4,6 +4,7 @@ import json
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+from supabase import create_client, Client
 
 from app.adapters.model_router import ModelRouter
 from app.core.config import settings
@@ -14,36 +15,19 @@ class DocumentService:
     """Orchestrates document ingestion, AI extraction, and database storage."""
 
     def __init__(self, router: ModelRouter | None = None) -> None:
-        # Uses ModelRouter (Gemini -> Groq -> HuggingFace failover) instead of
-        # a single hardcoded adapter, so a Gemini outage/quota exhaustion no
-        # longer takes the whole upload pipeline down with it.
         self.router = router or ModelRouter()
+        # Initialize Supabase client for Storage
+        self.supabase: Client = create_client(
+            settings.supabase_url, 
+            settings.supabase_service_role_key # Requires Service Role Key for storage ops
+        )
 
     def _resolve_user_id(self, user_id: str | None) -> str:
-        """
-        Determines which user_id to attribute this upload to.
-
-        - If a real user_id was passed in (e.g. from an authenticated
-          session once auth is wired up), use it.
-        - Otherwise, only in development, fall back to a placeholder ID
-          from settings so local testing keeps working without auth.
-        - In any other environment, refuse the upload rather than silently
-          attributing it to a fake user.
-        """
         if user_id:
             return user_id
-
         if settings.environment == "development" and settings.default_dev_user_id:
-            logger.warning(
-                "No user_id supplied; using DEFAULT_DEV_USER_ID fallback "
-                "(environment=development only)."
-            )
             return settings.default_dev_user_id
-
-        raise ValueError(
-            "user_id is required to process an upload. "
-            "No authenticated user was found and no development fallback is configured."
-        )
+        raise ValueError("user_id required.")
 
     async def process_upload(
         self,
@@ -52,52 +36,45 @@ class DocumentService:
         db: AsyncSession,
         user_id: str | None = None,
     ) -> dict:
-        """
-        Read an uploaded document, send it to the AI (with automatic
-        provider failover), save the results to Supabase, and return a
-        stable response payload for the API layer.
-        """
         try:
             resolved_user_id = self._resolve_user_id(user_id)
-
             content = await file.read()
-            file_size = len(content)
-
-            # --- AI EXTRACTION PHASE (Gemini -> Groq -> HuggingFace) ---
-            extracted_data = await self.router.route_process_document(
-                content, file.content_type
+            
+            # --- STORAGE PHASE ---
+            # Path format: <user_id>/<filename> matches your RLS policy (storage.foldername(name))[1]
+            unique_id = uuid.uuid4().hex[:6]
+            if '.' in file.filename:
+                filename_base, extension = file.filename.rsplit('.', 1)
+                unique_filename = f"{filename_base}_{unique_id}.{extension}"
+            else:
+                unique_filename = f"{file.filename}_{unique_id}"
+                
+            storage_path = f"{resolved_user_id}/{unique_filename}"
+            
+            self.supabase.storage.from_("documents").upload(
+                path=storage_path,
+                file=content,
+                file_options={"content-type": file.content_type}
             )
-            normalized_data = self._normalize_extraction(extracted_data)
+            file_url = self.supabase.storage.from_("documents").get_public_url(storage_path)
 
-            # --- PARSE RESULTS TO DETERMINE STATUS ---
-            formatted_extracted_data = []
-            ai_results = normalized_data.get("data", {})
+            db_status = "Success"
+            ai_results = {}
 
-            if isinstance(ai_results, str):
-                clean_string = ai_results.replace("```json", "").replace("```", "").strip()
-                try:
-                    ai_results = json.loads(clean_string)
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "AI provider returned plain text instead of JSON for %s: %s",
-                        file.filename, ai_results,
-                    )
-                    ai_results = {"extraction_status": "Failed - Invalid AI Format"}
-
-            # If the AI provider returned text that couldn't be parsed as
-            # JSON, ai_results collapses to this single sentinel key/value pair.
-            extraction_failed = (
-                isinstance(ai_results, dict)
-                and set(ai_results.keys()) == {"extraction_status"}
-                and ai_results.get("extraction_status") == "Failed - Invalid AI Format"
-            )
-
-            db_status = "Error" if extraction_failed else "Success"
+            # --- AI EXTRACTION PHASE ---
+            try:
+                extracted_data = await self.router.route_process_document(
+                    content, file.content_type
+                )
+                normalized_data = self._normalize_extraction(extracted_data)
+                ai_results = normalized_data.get("data", {})
+            except Exception as ai_exc:
+                logger.error("AI Extraction Pipeline Failed: %s", str(ai_exc))
+                db_status = "Error"
 
             # --- DATABASE STORAGE PHASE ---
             new_form_id = uuid.uuid4()
-            file_url_placeholder = f"https://axis-storage.local/{file.filename.replace(' ', '_')}"
-
+            
             form_query = text("""
                 INSERT INTO forms (id, user_id, filename, file_url, form_type, status)
                 VALUES (:id, :user_id, :filename, :file_url, :form_type, :status)
@@ -107,32 +84,33 @@ class DocumentService:
                 "id": new_form_id,
                 "user_id": resolved_user_id,
                 "filename": file.filename,
-                "file_url": file_url_placeholder,
+                "file_url": file_url,
                 "form_type": form_type,
                 "status": db_status
             })
 
-            field_query = text("""
-                INSERT INTO extracted_fields (id, form_id, field_name, extracted_value, confidence_score)
-                VALUES (:id, :form_id, :field_name, :extracted_value, :confidence_score)
-            """)
+            formatted_extracted_data = []
 
-            for key, value in ai_results.items():
-                db_value = json.dumps(value) if value is not None else None
+            if db_status == "Success" and ai_results:
+                field_query = text("""
+                    INSERT INTO extracted_fields (id, form_id, field_name, extracted_value, confidence_score)
+                    VALUES (:id, :form_id, :field_name, :extracted_value, :confidence_score)
+                """)
 
-                await db.execute(field_query, {
-                    "id": uuid.uuid4(),
-                    "form_id": new_form_id,
-                    "field_name": str(key),
-                    "extracted_value": db_value,
-                    "confidence_score": 0.95
-                })
+                for key, value in ai_results.items():
+                    await db.execute(field_query, {
+                        "id": uuid.uuid4(),
+                        "form_id": new_form_id,
+                        "field_name": str(key),
+                        "extracted_value": json.dumps(value),
+                        "confidence_score": 0.95
+                    })
 
-                formatted_extracted_data.append({
-                    "field_name": str(key),
-                    "extracted_value": value,
-                    "confidence_score": 0.95
-                })
+                    formatted_extracted_data.append({
+                        "field_name": str(key),
+                        "extracted_value": value,
+                        "confidence_score": 0.95
+                    })
 
             await db.commit()
 
@@ -140,22 +118,21 @@ class DocumentService:
                 "form_details": {
                     "user_id": resolved_user_id,
                     "filename": file.filename,
-                    "file_url": file_url_placeholder
+                    "file_url": file_url
                 },
                 "extracted_data": formatted_extracted_data,
                 "form_type": form_type,
-                "status": "failed" if extraction_failed else "success",
+                "status": "success" if db_status == "Success" else "failed",
             }
 
         except Exception as exc:
             await db.rollback()
-            logger.exception("Document orchestration failed for %s", file.filename)
+            logger.exception("Document orchestration failed")
             raise
 
     def _normalize_extraction(self, extracted_data: object) -> dict:
         if not isinstance(extracted_data, dict):
             raise ValueError("AI extraction must return a dictionary payload.")
-
         return {
             "provider": extracted_data.get("provider"),
             "status": extracted_data.get("status"),
