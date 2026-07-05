@@ -32,14 +32,12 @@ class ModelRouter:
                 self.logger.warning(message)
                 failures.append(message)
                 continue
-            
+
             except Exception as e:
                 message = f"{provider.get_provider_name()} failed: {str(e)}"
                 self.logger.error(message)
                 failures.append(message)
-                # If this provider fails, the loop continues to the next one automatically
                 continue
-        
-        # If the code reaches here, all providers have failed
+
         failure_summary = " | ".join(failures) if failures else "No providers attempted."
         raise Exception(f"Critical Failure: All AI providers failed to process the document. {failure_summary}")

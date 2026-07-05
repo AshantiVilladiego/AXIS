@@ -5,98 +5,146 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
-from app.adapters.base import ModelAdapter
-from app.adapters.providers import GeminiAdapter
+from app.adapters.model_router import ModelRouter
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 class DocumentService:
     """Orchestrates document ingestion, AI extraction, and database storage."""
 
-    def __init__(self, adapter: ModelAdapter | None = None) -> None:
-        self.adapter = adapter or GeminiAdapter()
+    def __init__(self, router: ModelRouter | None = None) -> None:
+        # Uses ModelRouter (Gemini -> Groq -> HuggingFace failover) instead of
+        # a single hardcoded adapter, so a Gemini outage/quota exhaustion no
+        # longer takes the whole upload pipeline down with it.
+        self.router = router or ModelRouter()
 
-    async def process_upload(self, file: UploadFile, form_type: str, db: AsyncSession) -> dict:
+    def _resolve_user_id(self, user_id: str | None) -> str:
         """
-        Read an uploaded document, send it to the AI, save the results to Supabase, 
-        and return a stable response payload for the API layer.
+        Determines which user_id to attribute this upload to.
+
+        - If a real user_id was passed in (e.g. from an authenticated
+          session once auth is wired up), use it.
+        - Otherwise, only in development, fall back to a placeholder ID
+          from settings so local testing keeps working without auth.
+        - In any other environment, refuse the upload rather than silently
+          attributing it to a fake user.
+        """
+        if user_id:
+            return user_id
+
+        if settings.environment == "development" and settings.default_dev_user_id:
+            logger.warning(
+                "No user_id supplied; using DEFAULT_DEV_USER_ID fallback "
+                "(environment=development only)."
+            )
+            return settings.default_dev_user_id
+
+        raise ValueError(
+            "user_id is required to process an upload. "
+            "No authenticated user was found and no development fallback is configured."
+        )
+
+    async def process_upload(
+        self,
+        file: UploadFile,
+        form_type: str,
+        db: AsyncSession,
+        user_id: str | None = None,
+    ) -> dict:
+        """
+        Read an uploaded document, send it to the AI (with automatic
+        provider failover), save the results to Supabase, and return a
+        stable response payload for the API layer.
         """
         try:
+            resolved_user_id = self._resolve_user_id(user_id)
+
             content = await file.read()
             file_size = len(content)
 
-            # --- AI EXTRACTION PHASE ---
-            # Correctly passing both content and content_type to the GeminiAdapter
-            extracted_data = await self.adapter.process_document(content, file_type=file.content_type)
+            # --- AI EXTRACTION PHASE (Gemini -> Groq -> HuggingFace) ---
+            extracted_data = await self.router.route_process_document(
+                content, file.content_type
+            )
             normalized_data = self._normalize_extraction(extracted_data)
 
             # --- DATABASE STORAGE PHASE ---
-            
-            # Re-added the test ID so the database knows who owns this document
             new_form_id = uuid.uuid4()
-            test_user_id = "0052c56e-20cb-4345-a76c-1d2c1f705ebf" 
             file_url_placeholder = f"https://axis-storage.local/{file.filename.replace(' ', '_')}"
 
-            # 1. Insert core document record
             form_query = text("""
                 INSERT INTO forms (id, user_id, filename, file_url)
                 VALUES (:id, :user_id, :filename, :file_url)
             """)
-            
+
             await db.execute(form_query, {
                 "id": new_form_id,
-                "user_id": test_user_id,
+                "user_id": resolved_user_id,
                 "filename": file.filename,
                 "file_url": file_url_placeholder
             })
 
-            # 2. Insert extracted fields
             field_query = text("""
                 INSERT INTO extracted_fields (id, form_id, field_name, extracted_value, confidence_score)
                 VALUES (:id, :form_id, :field_name, :extracted_value, :confidence_score)
             """)
-            
+
             formatted_extracted_data = []
             ai_results = normalized_data.get("data", {})
 
-            # Safety fix: handle strings vs dictionaries
             if isinstance(ai_results, str):
                 clean_string = ai_results.replace("```json", "").replace("```", "").strip()
                 try:
                     ai_results = json.loads(clean_string)
                 except json.JSONDecodeError:
-                    print(f"\n--- WARNING: GEMINI SENT PLAIN TEXT INSTEAD OF JSON ---\n{ai_results}\n------------------------------------------------------")
+                    logger.warning(
+                        "AI provider returned plain text instead of JSON for %s: %s",
+                        file.filename, ai_results,
+                    )
                     ai_results = {"extraction_status": "Failed - Invalid AI Format"}
 
+            # If the AI provider returned text that couldn't be parsed as
+            # JSON, ai_results collapses to this single sentinel key/value
+            # pair (see the json.JSONDecodeError branch above) — treat that
+            # as a failed extraction rather than a successful one with one
+            # oddly-named field.
+            extraction_failed = (
+                isinstance(ai_results, dict)
+                and set(ai_results.keys()) == {"extraction_status"}
+                and ai_results.get("extraction_status") == "Failed - Invalid AI Format"
+            )
+
             for key, value in ai_results.items():
+                db_value = json.dumps(value) if value is not None else None
+
                 await db.execute(field_query, {
                     "id": uuid.uuid4(),
                     "form_id": new_form_id,
                     "field_name": str(key),
-                    "extracted_value": str(value) if value else None,
+                    "extracted_value": db_value,
                     "confidence_score": 0.95
                 })
-                
+
                 formatted_extracted_data.append({
-                    "field_name": str(key), 
-                    "extracted_value": str(value) if value else None,
-                    "confidence_score": 0.95 # <--- Added this to ensure the Pydantic schema is fully satisfied
+                    "field_name": str(key),
+                    "extracted_value": value,
+                    "confidence_score": 0.95
                 })
 
-            # Commit the transaction to the database
             await db.commit()
 
-            # --- THE FIX: This now perfectly matches your Pydantic Schema ---
             return {
                 "form_details": {
-                    "user_id": test_user_id,
+                    "user_id": resolved_user_id,
                     "filename": file.filename,
                     "file_url": file_url_placeholder
                 },
-                "extracted_data": formatted_extracted_data
+                "extracted_data": formatted_extracted_data,
+                "form_type": form_type,
+                "status": "failed" if extraction_failed else "success",
             }
-            # ----------------------------------------------------------------
-            
+
         except Exception as exc:
             await db.rollback()
             logger.exception("Document orchestration failed for %s", file.filename)

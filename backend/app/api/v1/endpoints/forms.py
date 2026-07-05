@@ -3,38 +3,39 @@ import logging
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# --- NEW IMPORTS (The Cloud Engineer's Bridge) ---
+from app.core.auth import get_current_user_id
 from app.db.session import get_db
-from app.schema import DocumentExtractionResponse 
-# -------------------------------------------------
+from app.schema import DocumentExtractionResponse
 
 from app.services.document_service import DocumentService
 
 logger = logging.getLogger(__name__)
 
-# Router definition matching the API v1 structure
 router = APIRouter(prefix="/api", tags=["forms"])
 
-# Service instantiation
 document_service = DocumentService()
 
 
-# Notice the new 'response_model' parameter! This is your fail-safe filter.
 @router.post("/upload", response_model=DocumentExtractionResponse)
 async def upload_document(
     file: UploadFile = File(...),
     form_type: str = Form(...),
-    db: AsyncSession = Depends(get_db)  # <--- FIXED: We ask FastAPI for the database here!
+    db: AsyncSession = Depends(get_db),
+    # Derived from a verified Supabase access token — never trust a
+    # client-supplied user_id field, since any caller could set it to
+    # someone else's id. See app/core/auth.py for the verification logic.
+    user_id: str | None = Depends(get_current_user_id),
 ):
     """
     Receives a document from the Next.js frontend, processes it using the AI adapter,
     validates it strictly against the database schema, and saves it.
     """
     try:
-        # We now pass the 'db' session into the service so it can actually save data!
-        return await document_service.process_upload(file, form_type, db)
+        return await document_service.process_upload(file, form_type, db, user_id=user_id)
+    except ValueError as exc:
+        # Raised by DocumentService when no user_id is available and we're
+        # not in development — a 400 (bad request), not a 500 (server bug).
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        # Log the exception for observability
         logger.exception("Upload processing failed for %s", file.filename)
-        # Raise an HTTPException to communicate the failure to the frontend
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(exc)}") from exc

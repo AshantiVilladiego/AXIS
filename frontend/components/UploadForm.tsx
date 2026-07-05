@@ -2,9 +2,185 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { UploadResponse } from '../types/api'; 
+import { useSupabase } from './providers/SupabaseProvider';
 
 interface UploadFormProps {
   apiStatus?: string;
+}
+
+interface ExtractedField {
+  field_name: string;
+  extracted_value: unknown;
+  confidence_score?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Parses Python literal syntax (single-quoted strings, None/True/False,
+// nested dicts/lists) into a plain JS value. The backend is serializing
+// Python dict reprs directly instead of proper JSON, so JSON.parse can't
+// be used here — this is a small hand-rolled recursive-descent parser.
+// ---------------------------------------------------------------------------
+function parsePythonLiteral(input: string): unknown {
+  let i = 0;
+  const s = input;
+
+  const skipWs = () => {
+    while (i < s.length && /\s/.test(s[i])) i++;
+  };
+
+  const parseString = (): string => {
+    const quote = s[i];
+    i++;
+    let result = '';
+    while (i < s.length && s[i] !== quote) {
+      if (s[i] === '\\' && i + 1 < s.length) {
+        result += s[i + 1];
+        i += 2;
+      } else {
+        result += s[i];
+        i++;
+      }
+    }
+    i++; // closing quote
+    return result;
+  };
+
+  const parseNumber = (): number => {
+    const start = i;
+    while (i < s.length && /[-\d.eE+]/.test(s[i])) i++;
+    return parseFloat(s.slice(start, i));
+  };
+
+  const parseDict = (): Record<string, unknown> => {
+    const obj: Record<string, unknown> = {};
+    i++; // skip {
+    skipWs();
+    if (s[i] === '}') { i++; return obj; }
+    while (i < s.length) {
+      skipWs();
+      const key = parseValue();
+      skipWs();
+      if (s[i] === ':') i++;
+      const value = parseValue();
+      obj[String(key)] = value;
+      skipWs();
+      if (s[i] === ',') { i++; continue; }
+      if (s[i] === '}') { i++; break; }
+      break;
+    }
+    return obj;
+  };
+
+  const parseList = (): unknown[] => {
+    const arr: unknown[] = [];
+    i++; // skip [
+    skipWs();
+    if (s[i] === ']') { i++; return arr; }
+    while (i < s.length) {
+      skipWs();
+      arr.push(parseValue());
+      skipWs();
+      if (s[i] === ',') { i++; continue; }
+      if (s[i] === ']') { i++; break; }
+      break;
+    }
+    return arr;
+  };
+
+  function parseValue(): unknown {
+    skipWs();
+    const c = s[i];
+    if (c === '{') return parseDict();
+    if (c === '[') return parseList();
+    if (c === "'" || c === '"') return parseString();
+    if (s.startsWith('None', i)) { i += 4; return null; }
+    if (s.startsWith('True', i)) { i += 4; return true; }
+    if (s.startsWith('False', i)) { i += 5; return false; }
+    return parseNumber();
+  }
+
+  try {
+    return parseValue();
+  } catch {
+    return input; // fall back to raw string if parsing fails
+  }
+}
+
+// Normalizes a field's extracted_value: parses it if it's a Python-literal
+// string, otherwise passes real objects/primitives through untouched.
+function normalizeValue(value: unknown): unknown {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      return parsePythonLiteral(trimmed);
+    }
+    return value;
+  }
+  return value;
+}
+
+function formatLabel(key: string): string {
+  return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Recursively renders a parsed value as nested label/value blocks.
+function FieldValue({ value, depth = 0 }: { value: unknown; depth?: number }) {
+  if (value === null || value === undefined || value === '') {
+    return <span className="text-slate-400 italic">Not extracted</span>;
+  }
+
+  if (typeof value === 'boolean') {
+    return <span className="text-slate-800 font-medium">{value ? 'Yes' : 'No'}</span>;
+  }
+
+  if (typeof value === 'string' || typeof value === 'number') {
+    return <span className="text-slate-800 font-medium whitespace-pre-wrap">{String(value)}</span>;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return <span className="text-slate-400 italic">None</span>;
+    }
+    return (
+      <div className="space-y-2 mt-1">
+        {value.map((item, idx) => (
+          <div key={idx} className="border border-slate-200 rounded-md p-2 bg-white">
+            <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Item {idx + 1}</p>
+            <FieldValue value={item} depth={depth + 1} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    const hasContent = entries.some(([, v]) => v !== null && v !== undefined && v !== '' && v !== false);
+
+    return (
+      <div className={`space-y-2 ${depth > 0 ? 'mt-1 pl-3 border-l-2 border-slate-200' : ''}`}>
+        {!hasContent && (
+          <span className="text-slate-400 italic">No data extracted for this section</span>
+        )}
+        {entries.map(([key, val]) => {
+          const normalized = normalizeValue(val);
+          if (normalized === null || normalized === undefined || normalized === '' || normalized === false) {
+            return null; // skip empty leaves to reduce noise
+          }
+          return (
+            <div key={key}>
+              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-0.5">
+                {formatLabel(key)}
+              </label>
+              <FieldValue value={normalized} depth={depth + 1} />
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return <span className="text-slate-800">{String(value)}</span>;
 }
 
 export default function UploadForm({ apiStatus = "Checking connection..." }: UploadFormProps) {
@@ -15,27 +191,20 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
   const [formType, setFormType] = useState('auto');
   const [isDragging, setIsDragging] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResponse | null>(null);
-  
-  // NEW: State to hold the temporary local URL for the PDF/Image preview
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { supabase } = useSupabase();
 
-  // Refactored to use environment variable
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-  // NEW: Automatically generate a preview URL whenever a file is selected
   useEffect(() => {
     if (!selectedFile) {
       setPreviewUrl(null);
       return;
     }
-    
-    // Create a local memory link to the file
     const objectUrl = URL.createObjectURL(selectedFile);
     setPreviewUrl(objectUrl);
-
-    // Free memory when the component unmounts or the file changes
     return () => URL.revokeObjectURL(objectUrl);
   }, [selectedFile]);
   
@@ -76,8 +245,24 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
     formData.append("form_type", formType); 
 
     try {
+      // Attach the current Supabase session's access token so the backend
+      // can verify who's making the request server-side. Never send a
+      // user_id field directly — the backend no longer accepts one, since
+      // a client-supplied id could be spoofed.
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+
+      const headers: HeadersInit = {};
+      if (accessToken) {
+        headers["Authorization"] = `Bearer ${accessToken}`;
+      }
+      // If there's no session (not logged in), the request still goes out
+      // without an Authorization header — the backend will 401 unless it's
+      // running in development mode with a dev fallback user configured.
+
       const response = await fetch(`${API_BASE_URL}/api/upload`, {
         method: "POST",
+        headers,
         body: formData,
       });
       
@@ -98,6 +283,11 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
       setIsUploading(false); 
     }
   };
+
+  // extracted_data is now an array of { field_name, extracted_value, confidence_score }
+  const extractedFields: ExtractedField[] = Array.isArray(uploadResult?.extracted_data)
+    ? (uploadResult!.extracted_data as unknown as ExtractedField[])
+    : [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -203,12 +393,12 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
         
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           
-          {/* UPDATED: Document Preview Panel */}
+          {/* Document Preview Panel */}
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col h-125">
             <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Document Preview</span>
               <span className="text-xs font-medium text-slate-400">
-                {uploadResult ? uploadResult.form_type : selectedFile ? "Ready" : "Awaiting file..."}
+                {uploadResult ? uploadResult.form_details.filename : selectedFile ? "Ready" : "Awaiting file..."}
               </span>
             </div>
             <div className="flex-1 bg-slate-100/50 relative">
@@ -236,21 +426,25 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
             </div>
             <div className="flex-1 p-6 space-y-4 overflow-y-auto">
               
-              {uploadResult?.extracted_data ? (
-                Object.entries(
-                  uploadResult.extracted_data.data || uploadResult.extracted_data
-                ).map(([key, value]) => (
-                  <div key={key} className="bg-emerald-50 rounded-lg p-3 border border-emerald-100 transition-all">
-                    <label className="block text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-1">
-                      {key.replace(/_/g, ' ')}
-                    </label>
-                    <p className="text-sm text-slate-800 font-medium whitespace-pre-wrap">
-                      {typeof value === 'object' && value !== null 
-                        ? JSON.stringify(value, null, 2).replace(/["{}]/g, '') 
-                        : String(value)}
-                    </p>
-                  </div>
-                ))
+              {extractedFields.length > 0 ? (
+                extractedFields.map((field) => {
+                  const normalized = normalizeValue(field.extracted_value);
+                  return (
+                    <div key={field.field_name} className="bg-emerald-50 rounded-lg p-3 border border-emerald-100 transition-all">
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-[10px] font-bold text-emerald-600 uppercase tracking-wider">
+                          {formatLabel(field.field_name)}
+                        </label>
+                        {typeof field.confidence_score === 'number' && (
+                          <span className="text-[10px] font-semibold text-emerald-500">
+                            {Math.round(field.confidence_score * 100)}%
+                          </span>
+                        )}
+                      </div>
+                      <FieldValue value={normalized} />
+                    </div>
+                  );
+                })
               ) : (
                 ['Full Name', 'Taxpayer ID (TIN)', 'Birth Date', 'Address'].map((field) => (
                   <div key={field} className="bg-slate-50 rounded-lg p-3 border border-slate-100">

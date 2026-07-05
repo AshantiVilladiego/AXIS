@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     supabase_url: str | None = Field(default=None, alias="SUPABASE_URL")
     supabase_anon_key: str | None = Field(default=None, alias="SUPABASE_ANON_KEY")
+    supabase_jwt_secret: str | None = None
     supabase_service_role_key: str | None = Field(
         default=None,
         alias="SUPABASE_SERVICE_ROLE_KEY",
@@ -33,6 +34,19 @@ class Settings(BaseSettings):
             "http://127.0.0.1:3000",
         ]
     )
+
+    # Placeholder user ID used ONLY when environment == "development" and no
+    # real user_id was supplied with the request. Never used outside of dev —
+    # see DocumentService._resolve_user_id. Set via .env, not hardcoded in code.
+    default_dev_user_id: str | None = Field(
+        default=None, alias="DEFAULT_DEV_USER_ID"
+    )
+
+    # Optional path to a CA bundle (e.g. Amazon RDS's root CA, which
+    # Supabase Postgres certs chain up to) used to verify the DB TLS
+    # connection when the machine's default trust store doesn't already
+    # include it -- common on Windows, or behind a TLS-inspecting proxy/AV.
+    db_ssl_ca_file: str | None = Field(default=None, alias="SSL_CERT_FILE")
 
 
 @lru_cache

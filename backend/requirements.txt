@@ -5,6 +5,8 @@ asyncpg
 sqlalchemy
 pydantic-settings
 python-multipart
+pyJWT
+certifi
 google-genai
 groq
 huggingface_hub
