@@ -69,7 +69,8 @@ class DocumentService:
                 normalized_data = self._normalize_extraction(extracted_data)
                 ai_results = normalized_data.get("data", {})
             except Exception as ai_exc:
-                logger.error("AI Extraction Pipeline Failed: %s", str(ai_exc))
+                # CHANGE THIS LOG LINE
+                logger.error("AI/OCR Extraction Pipeline Failed. Reason: %s", str(ai_exc))
                 db_status = "Error"
 
             # --- DATABASE STORAGE PHASE ---
@@ -115,6 +116,7 @@ class DocumentService:
             await db.commit()
 
             return {
+                "id": str(new_form_id), # <-- ADD THIS LINE
                 "form_details": {
                     "user_id": resolved_user_id,
                     "filename": file.filename,

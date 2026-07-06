@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 from typing import Dict, Any, List
 
 from app.adapters.base import ModelAdapter
@@ -154,9 +155,10 @@ class GroqAdapter(ModelAdapter):
         except Exception as e:
             raise ProviderUnavailableError(f"Could not render document to image(s): {e}")
 
+        # FIX 1: Updated to the live 'instruct' models!
         model_candidates = [
-            "llama-3.2-90b-vision-preview",
-            "llama-3.2-11b-vision-preview",
+            "llama-3.2-90b-vision-instruct",
+            "llama-3.2-11b-vision-instruct",
         ]
 
         image_content = [
@@ -279,3 +281,38 @@ class HFAdapter(ModelAdapter):
 
     def get_provider_name(self) -> str:
         return "HuggingFace"
+    
+# Add this to the end of providers.py:
+import os
+class LocalOCRAdapter(ModelAdapter):
+    async def process_document(self, file_data: bytes, file_type: str) -> Dict[str, Any]:
+        try:
+            import pytesseract
+            from PIL import Image
+            import io
+            # Use a path relative to the project root for team-wide compatibility
+            tesseract_path = os.path.join(os.getcwd(), "tesseract-bin", "tesseract.exe")
+            pytesseract.pytesseract.tesseract_cmd = tesseract_path
+            
+            if not os.path.exists(tesseract_path):
+                raise ProviderUnavailableError(f"Tesseract executable NOT FOUND at: {tesseract_path}")
+
+            page_images = _render_to_images(file_data, file_type, max_pages=1)
+            img = Image.open(io.BytesIO(page_images[0]))
+            text = pytesseract.image_to_string(img)
+            
+            return {
+                "provider": "local_tesseract",
+                "status": "success",
+                "data": {"raw_extracted_text": text.strip()},
+                "model": "tesseract-ocr",
+            }
+        except Exception as e:
+            raise ProviderUnavailableError(f"Local OCR failed: {str(e)}")
+
+    async def validate_data(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
+        return extracted_data
+
+    def get_provider_name(self) -> str:
+        return "Local OCR (Tesseract)"
+    

@@ -14,8 +14,13 @@ export interface FormDetails {
 
 // Matches app/schema.py's DocumentExtractionResponse exactly.
 export interface UploadResponse {
-  form_details: FormDetails;
-  extracted_data: ExtractedField[];
-  form_type: string;
-  status: 'success' | 'failed';
+  id?: string;
+  form_id?: string;
+  status?: string;
+  form_details?: {
+    id?: string;
+    filename?: string;
+  };
+  extracted_data?: any; 
+  fields?: any;
 }

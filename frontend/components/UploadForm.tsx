@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { UploadResponse } from '../types/api'; 
 import { useSupabase } from './providers/SupabaseProvider';
 
+
 interface UploadFormProps {
   apiStatus?: string;
 }
@@ -12,6 +13,8 @@ interface ExtractedField {
   field_name: string;
   extracted_value: unknown;
   confidence_score?: number;
+  text?: string; // Added for Magic Fill payload
+  isMagicFilled?: boolean; // Added for UI tracking
 }
 
 // ---------------------------------------------------------------------------
@@ -106,8 +109,6 @@ function parsePythonLiteral(input: string): unknown {
   }
 }
 
-// Normalizes a field's extracted_value: parses it if it's a Python-literal
-// string, otherwise passes real objects/primitives through untouched.
 function normalizeValue(value: unknown): unknown {
   if (typeof value === 'string') {
     const trimmed = value.trim();
@@ -123,7 +124,6 @@ function formatLabel(key: string): string {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// Recursively renders a parsed value as nested label/value blocks.
 function FieldValue({ value, depth = 0 }: { value: unknown; depth?: number }) {
   if (value === null || value === undefined || value === '') {
     return <span className="text-slate-400 italic">Not extracted</span>;
@@ -165,7 +165,7 @@ function FieldValue({ value, depth = 0 }: { value: unknown; depth?: number }) {
         {entries.map(([key, val]) => {
           const normalized = normalizeValue(val);
           if (normalized === null || normalized === undefined || normalized === '' || normalized === false) {
-            return null; // skip empty leaves to reduce noise
+            return null; 
           }
           return (
             <div key={key}>
@@ -194,13 +194,40 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   
+  // --- Magic Fill State Additions ---
+  const [profileData, setProfileData] = useState<any>(null);
+  const [formId, setFormId] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { supabase } = useSupabase();
 
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-  const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
+  const MAX_FILE_SIZE = 25 * 1024 * 1024; 
   const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
+
+  // Fetch the user's profile data on mount
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+        const response = await fetch(`${API_BASE_URL}/profile/`, {
+          headers: { "Authorization": `Bearer ${session.access_token}` }
+        });
+        if (response.ok) {
+          const result = await response.json();
+          if (result.data && Object.keys(result.data).length > 0) {
+            setProfileData(result.data);
+          }
+        }
+      } catch (err) {
+        console.error("Could not load profile data:", err);
+      }
+    };
+    fetchProfile();
+  }, [supabase, API_BASE_URL]);
 
   useEffect(() => {
     if (!selectedFile) {
@@ -214,17 +241,14 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
   
   const validateFile = (file: File): boolean => {
     setUploadError(null);
-    
     if (!ALLOWED_TYPES.includes(file.type)) {
       setUploadError("Invalid file type. Only PDF, JPG, and PNG documents are supported.");
       return false;
     }
-    
     if (file.size > MAX_FILE_SIZE) {
       setUploadError(`File is too large (${(file.size / 1024 / 1024).toFixed(2)} MB). Max allowed size is 25MB.`);
       return false;
     }
-    
     return true;
   };
 
@@ -246,6 +270,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
       if (validateFile(file)) {
         setSelectedFile(file);
         setUploadResult(null); 
+        setFormId(null);
       }
     }
   };
@@ -256,8 +281,8 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
       if (validateFile(file)) {
         setSelectedFile(file);
         setUploadResult(null); 
+        setFormId(null);
       } else {
-        // Reset the input so they can try selecting the same file again if needed
         e.target.value = '';
       }
     }
@@ -267,6 +292,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
     e.stopPropagation();
     setSelectedFile(null);
     setUploadResult(null);
+    setFormId(null);
     setUploadError(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -309,10 +335,19 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
         throw new Error(errorMessage);
       }
       
-      const data: UploadResponse = await response.json();
+      const data = await response.json();
+
+      if (data.status === 'Error' || data.status === 'error' || data.status === 'failed') {
+        throw new Error("Extraction Failed: All AI models and local fallbacks are currently unavailable. Please try again later.");
+      }
+
+      setUploadResult(data as UploadResponse);
+
       console.log("Backend Response:", data);
       
-      setUploadResult(data);
+      // Capture the ID for the PDF Generator
+      const capturedId = data.id || data.form_id || data.form_details?.id;
+      setFormId(capturedId);
       
     } catch (error) {
       console.error("Upload error:", error);
@@ -322,6 +357,94 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
     }
   };
 
+  // --- Magic Fill & Generation Functions ---
+  const prepareMagicFillData = (fields: ExtractedField[], profile: any) => {
+    if (!profile) return fields;
+
+    const profileMap: Record<string, string> = {
+      'tin': profile.tinNumber,
+      'taxpayer id': profile.tinNumber,
+      'sss': profile.sssNumber,
+      'philhealth': profile.philhealthNumber,
+      'pag-ibig': profile.pagibigNumber,
+      'name': profile.fullName,
+      'full name': profile.fullName,
+      'address': profile.address,
+      'contact': profile.contactNumber,
+      'birth': profile.birthDate,
+    };
+
+    return fields.map(field => {
+      const normalizedLabel = (field.field_name || '').toLowerCase();
+      const matchedKey = Object.keys(profileMap).find(key => normalizedLabel.includes(key));
+      
+      if (matchedKey && profileMap[matchedKey]) {
+        return { 
+          ...field, 
+          text: profileMap[matchedKey], // Set text for PDF generator
+          isMagicFilled: true 
+        };
+      }
+      // If no match, ensure the PDF generator still receives whatever text was originally extracted
+      return { ...field, text: String(field.extracted_value || '') };
+    });
+  };
+
+  const handleGenerateDocument = async () => {
+    // 1. Aggressively hunt for the form ID (checking all possible locations)
+    const targetId = formId || uploadResult?.id || uploadResult?.form_details?.id;
+
+    if (!targetId) {
+      alert("⚠️ Error: The Form ID is missing! Open Developer Tools (F12) -> Console to see the backend response.");
+      console.error("Could not find ID in this backend payload:", uploadResult);
+      return; // Stop here before we break the app
+    }
+
+    if (!extractedFields || extractedFields.length === 0) {
+      alert("⚠️ No extracted fields available to fill.");
+      return;
+    }
+
+    setIsGenerating(true);
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const filledData = prepareMagicFillData(extractedFields, profileData);
+
+      console.log(`Sending request to: ${API_BASE_URL}/api/forms/${targetId}/generate`); // Debug log
+
+      const response = await fetch(`${API_BASE_URL}/api/forms/${targetId}/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          "Authorization": `Bearer ${session?.access_token || ''}`
+        },
+        body: JSON.stringify(filledData) 
+      });
+
+      if (!response.ok) {
+        const errorMsg = await response.text();
+        throw new Error(`Backend Error ${response.status}: ${errorMsg}`);
+      }
+
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `AXIS_Filled_Form_${targetId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+      
+    } catch (err: any) {
+      console.error("Generation error:", err);
+      alert(`Failed to generate document: ${err.message}`);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+  
   const extractedFields: ExtractedField[] = Array.isArray(uploadResult?.extracted_data)
     ? (uploadResult!.extracted_data as unknown as ExtractedField[])
     : [];
@@ -462,8 +585,8 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col h-[500px]">
             <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Document Preview</span>
-              <span className="text-xs font-medium text-slate-400 truncate max-w-[200px]" title={uploadResult ? uploadResult.form_details.filename : selectedFile ? selectedFile.name : ""}>
-                {uploadResult ? uploadResult.form_details.filename : selectedFile ? selectedFile.name : "Awaiting file..."}
+              <span className="text-xs font-medium text-slate-400 truncate max-w-[200px]" title={uploadResult ? uploadResult.form_details?.filename : selectedFile ? selectedFile.name : ""}>
+                {uploadResult ? uploadResult.form_details?.filename : selectedFile ? selectedFile.name : "Awaiting file..."}
               </span>
             </div>
             <div className="flex-1 bg-slate-100/50 relative">
@@ -525,6 +648,30 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
               )}
 
             </div>
+            
+            {/* --- MAGIC FILL CTA --- */}
+            {extractedFields.length > 0 && (
+              <div className="p-4 border-t border-slate-100 bg-slate-50 shrink-0">
+                <button
+                  onClick={handleGenerateDocument}
+                  disabled={isGenerating || !profileData}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-semibold py-3 px-4 rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2"
+                >
+                  {isGenerating ? (
+                    <>
+                      <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                      Generating Document...
+                    </>
+                  ) : '✨ Auto-Fill & Generate Document'}
+                </button>
+                {!profileData && (
+                  <p className="text-xs text-amber-600 mt-2 text-center font-medium bg-amber-50 p-2 rounded border border-amber-200">
+                    ⚠️ Set up your Profile Repository to enable Auto-Fill.
+                  </p>
+                )}
+              </div>
+            )}
+            
           </div>
         </div>
       </div>

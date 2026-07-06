@@ -1,18 +1,21 @@
-from app.adapters.providers import (
-    GeminiAdapter,
-    GroqAdapter,
-    HFAdapter,
-    ProviderUnavailableError,
-)
 import logging
+from app.adapters.dummy import DummyAdapter
+
+from app.adapters.providers import (
+    GeminiAdapter, GroqAdapter, HFAdapter, LocalOCRAdapter, ProviderUnavailableError
+)
 
 class ModelRouter:
     def __init__(self):
         # Provider priority order for extraction.
+        # It will try them in this exact order until one succeeds.
         self.providers = [
-            GeminiAdapter(),
-            GroqAdapter(),
-            HFAdapter()
+            # DummyAdapter(),
+            GeminiAdapter(),     # 1. Primary AI
+            GroqAdapter(),       # 2. Fast AI Backup
+            HFAdapter(),         # 3. Open Source AI Backup
+            LocalOCRAdapter()    # 4. Bulletproof Local Offline Backup
+            
         ]
         self.logger = logging.getLogger(__name__)
 
