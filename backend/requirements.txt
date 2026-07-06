@@ -5,6 +5,14 @@ asyncpg
 sqlalchemy
 pydantic-settings
 python-multipart
+pyJWT
+pyMuPDF
+pytesseract
+Pillow
+tenacity
+certifi
+supabase
 google-genai
 groq
 huggingface_hub
+httpx

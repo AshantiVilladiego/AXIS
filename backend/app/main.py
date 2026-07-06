@@ -7,11 +7,16 @@ from app.core.config import settings
 app = FastAPI(title=settings.app_name)
 
 # Configure CORS (Michael's Code - required for React frontend)
+# --- BULLETPROOF CORS CONFIGURATION ---
+# Hardcoding the local origins prevents Pydantic .env stringification bugs
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+    ],
     allow_credentials=True,
-    allow_methods=["*"], 
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 

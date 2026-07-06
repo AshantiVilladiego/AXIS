@@ -22,10 +22,10 @@ class Settings(BaseSettings):
 
     supabase_url: str | None = Field(default=None, alias="SUPABASE_URL")
     supabase_anon_key: str | None = Field(default=None, alias="SUPABASE_ANON_KEY")
-    supabase_service_role_key: str | None = Field(
-        default=None,
-        alias="SUPABASE_SERVICE_ROLE_KEY",
-    )
+    supabase_jwt_secret: str | None = None
+    
+    # Corrected: Defined once, mapping correctly to the env var
+    supabase_service_role_key: str = Field(..., alias="SUPABASE_SERVICE_ROLE_KEY")
 
     cors_origins: list[str] = Field(
         default_factory=lambda: [
@@ -33,6 +33,14 @@ class Settings(BaseSettings):
             "http://127.0.0.1:3000",
         ]
     )
+
+    # Placeholder user ID used ONLY when environment == "development"
+    default_dev_user_id: str | None = Field(
+        default=None, alias="DEFAULT_DEV_USER_ID"
+    )
+
+    # Path to a CA bundle for database TLS connections
+    db_ssl_ca_file: str | None = Field(default=None, alias="SSL_CERT_FILE")
 
 
 @lru_cache

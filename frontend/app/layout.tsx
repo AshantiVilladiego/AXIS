@@ -18,7 +18,13 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${inter.className} bg-slate-50`}>
+      {/* suppressHydrationWarning here only ignores mismatches on THIS
+          element (attributes on <body> itself) — it does not suppress
+          hydration warnings for children like SupabaseProvider or the
+          rest of the tree. This is the documented escape hatch for
+          browser extensions (Grammarly, ColorZilla, LanguageTool, etc.)
+          that inject data-* attributes into <body> before React hydrates. */}
+      <body className={`${inter.className} bg-slate-50`} suppressHydrationWarning>
         <SupabaseProvider>
           <div className="flex flex-col h-screen">
             {/* Header removed successfully */}

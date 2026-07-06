@@ -10,33 +10,14 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# --- Fill these in from Supabase Dashboard -> Project Settings -> Database ---
-# The project ref / username look correct already (postgres.atwdobxtgsmumswhrviu),
-# but the ORIGINAL .env string had no real hostname: "...axisbyyearners@://supabase.com"
-# That produces an empty host AND an empty port, which is exactly what triggered
-# `int('')` deep inside sqlalchemy/engine/url.py.
-#
-# Get the real values (host will look like "aws-0-<region>.pooler.supabase.com"
-# and port will be 5432 or 6543) and put them in your .env as DATABASE_URL, e.g.:
-#
-#   DATABASE_URL=postgresql://postgres.atwdobxtgsmumswhrviu:axisbyyearners@aws-0-us-east-1.pooler.supabase.com:6543/postgres
-#
-# ------------------------------------------------------------------------------
-
 
 def _build_engine_setup() -> tuple[URL, dict]:
-    """Build a validated connection URL + connect_args.
-
-    Uses URL.create() instead of raw string concatenation so a malformed
-    host/port can never silently collapse into an empty string that crashes
-    deep inside SQLAlchemy's url parser.
-    """
+    """Build a validated connection URL + connect_args."""
     is_vercel = os.environ.get("VERCEL") == "1" or os.environ.get("NOW_REGION") is not None
+    is_production = settings.environment.lower() == "production" or is_vercel
 
     raw = str(settings.database_url).strip()
 
-    # Support both postgresql:// and postgres:// (Supabase sometimes hands out
-    # the latter), and always target the asyncpg driver explicitly.
     if raw.startswith("postgresql+asyncpg://"):
         normalized = raw
     elif raw.startswith("postgresql://"):
@@ -44,47 +25,69 @@ def _build_engine_setup() -> tuple[URL, dict]:
     elif raw.startswith("postgres://"):
         normalized = raw.replace("postgres://", "postgresql+asyncpg://", 1)
     else:
-        raise ValueError(
-            f"DATABASE_URL has an unrecognized scheme: {raw!r}. "
-            "Expected it to start with postgresql://, postgres://, or postgresql+asyncpg://"
-        )
+        raise ValueError(f"DATABASE_URL has an unrecognized scheme: {raw!r}")
 
     try:
         url = _make_url_safely(normalized)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise ValueError(
             "DATABASE_URL is malformed and could not be parsed. "
             "Check that it has the form "
             "postgresql://<user>:<password>@<host>:<port>/<database> "
-            "with a real hostname and port (get this from the Supabase dashboard). "
             f"Original error: {exc}"
         ) from exc
 
     if url.host in (None, "") or url.port is None:
         raise ValueError(
-            f"DATABASE_URL parsed but host or port is missing (host={url.host!r}, "
-            f"port={url.port!r}). Your connection string is missing the real Supabase "
-            "hostname/port segment -- copy the exact string from "
-            "Supabase Dashboard -> Project Settings -> Database -> Connection string."
+            f"DATABASE_URL parsed but host or port is missing "
+            f"(host={url.host!r}, port={url.port!r})."
         )
 
-    if is_vercel:
-        # Production: always verify certs properly.
-        connect_args = {"ssl": ssl.create_default_context()}
-        return url, connect_args
+    if is_production:
+        return url, {"ssl": _build_ssl_context()}
 
-    # Local development only: corporate proxy intercepts TLS with a self-signed
-    # cert, so we relax verification. This branch is unreachable in prod because
-    # of the VERCEL/NOW_REGION check above.
-    #
-    # TEMP DIAGNOSTIC: disabling TLS entirely to test whether the corporate
-    # proxy is mangling the encrypted Postgres wire protocol post-handshake.
-    # If db-check succeeds with this, that confirms the proxy (not your
-    # credentials) was the problem. REVERT before doing anything sensitive
-    # over this connection -- this sends the password and all data in the
-    # clear on your local network.
-    print("--- LOCAL DEVELOPMENT: SSL DISABLED (diagnostic) ---")
-    return url, {"ssl": "disable"}
+    # Local development: same verified path by default. This bypass only
+    # fires if the env var is set as a real shell variable (not just in
+    # .env) AND we're not in production -- so it can never leak into prod.
+    if os.environ.get("DB_SSL_DIAGNOSTIC_DISABLE") == "1":
+        logger.warning(
+            "DB_SSL_DIAGNOSTIC_DISABLE=1 is set -- Postgres connection is "
+            "UNENCRYPTED. This should never be set outside local debugging."
+        )
+        return url, {"ssl": "disable"}
+
+    return url, {"ssl": _build_ssl_context()}
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """Builds a verified SSL context trusting Supabase's own CA
+    (prod-ca-2021.crt). Both the direct-connection host and the pooler
+    chain up through Supabase's private CA hierarchy -- there is no
+    public CA involved, so certifi's bundle cannot verify this chain.
+
+    Supabase's CA cert is missing the keyUsage extension, which trips
+    Python 3.13's default VERIFY_X509_STRICT flag (new RFC 5280
+    enforcement). We clear only that one flag; everything else --
+    hostname matching, full chain validation, expiry -- stays enforced.
+    This is a narrow, documented compatibility exception, not a
+    reduction in overall verification.
+    """
+    ca_file = settings.db_ssl_ca_file or "certs/prod-ca-2021.crt"
+
+    if not os.path.isfile(ca_file):
+        raise FileNotFoundError(
+            f"Supabase CA file not found at {ca_file!r}. Download it from "
+            "Supabase Dashboard -> Project Settings -> Database -> SSL Configuration."
+        )
+
+    ctx = ssl.create_default_context(cafile=ca_file)
+
+    # Targeted compatibility fix for Supabase's CA cert (missing keyUsage
+    # extension), not a general verification bypass.
+    if hasattr(ssl, "VERIFY_X509_STRICT"):
+        ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+
+    return ctx
 
 
 def _make_url_safely(url_string: str) -> URL:
@@ -98,8 +101,8 @@ def _make_url_safely(url_string: str) -> URL:
 DATABASE_URL, CONNECT_ARGS = _build_engine_setup()
 
 # --- THE PGBOUNCER FIX ---
-# Supabase uses PgBouncer on port 6543, which crashes if asyncpg tries to cache statements.
-# Injecting this into your existing args safely disables caching in all environments.
+# Supabase uses PgBouncer on the pooler, which crashes if asyncpg tries to
+# cache statements. Disable statement caching in all environments.
 CONNECT_ARGS["statement_cache_size"] = 0
 # -------------------------
 

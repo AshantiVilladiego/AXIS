@@ -1,13 +1,26 @@
-export interface ExtractedData {
-  [key: string]: any; 
+export interface ExtractedField {
+  field_name: string;
+  // Extracted values can be deeply nested (dicts of dicts, lists of dicts),
+  // matching ExtractedFieldCreate.extracted_value on the backend.
+  extracted_value: unknown;
+  confidence_score: number | null;
 }
 
-export interface UploadResponse {
+export interface FormDetails {
+  user_id: string; // UUID, serialized as a string over JSON
   filename: string;
-  content_type?: string;
-  size_in_bytes?: number;
-  form_type: string;
-  status: 'success' | 'failed' | 'processing';
-  message: string;
-  extracted_data: ExtractedData | null;
+  file_url: string;
+}
+
+// Matches app/schema.py's DocumentExtractionResponse exactly.
+export interface UploadResponse {
+  id?: string;
+  form_id?: string;
+  status?: string;
+  form_details?: {
+    id?: string;
+    filename?: string;
+  };
+  extracted_data?: any; 
+  fields?: any;
 }

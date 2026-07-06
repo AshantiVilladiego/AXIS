@@ -1,6 +1,9 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSupabase } from './providers/SupabaseProvider'; 
+
+const API_BASE_URL = 'http://127.0.0.1:8000';
 
 // Define the shape of our profile data
 interface UserProfile {
@@ -15,7 +18,9 @@ interface UserProfile {
 }
 
 export default function ProfileRepository() {
-  // 1. Set up the local state to hold all form values
+  // 1. Initialize the Supabase client from your provider
+  const { supabase } = useSupabase(); 
+
   const [profileData, setProfileData] = useState<UserProfile>({
     fullName: '',
     birthDate: '',
@@ -28,8 +33,37 @@ export default function ProfileRepository() {
   });
 
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [statusMessage, setStatusMessage] = useState({ type: '', text: '' });
 
-  // 2. Handle input changes dynamically
+  // 2. Fetch data when the component mounts
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+
+        const response = await fetch(`${API_BASE_URL}/profile/`, {
+          headers: { "Authorization": `Bearer ${session.access_token}` }
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          if (result.data && Object.keys(result.data).length > 0) {
+            setProfileData((prev) => ({ ...prev, ...result.data }));
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load profile:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchProfile();
+  }, [supabase]); // <-- Added supabase to dependency array
+
+  // 3. Handle input changes dynamically
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setProfileData((prev) => ({
@@ -38,20 +72,54 @@ export default function ProfileRepository() {
     }));
   };
 
-  // 3. The Save Flow Stub
+  // 4. Save the data to the backend API
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
+    setStatusMessage({ type: '', text: '' });
 
-    // TODO: Phase 3 Integration
-    // Replace this setTimeout stub with a real fetch POST to /api/profile
-    // once the backend data persistence schema is finalized.
-    setTimeout(() => {
-      console.log("Mock Save Successful. Data ready for backend:", profileData);
-      alert("Profile data temporarily saved to local state! Check the browser console to view the JSON payload.");
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("You must be logged in.");
+
+      const response = await fetch(`${API_BASE_URL}/profile/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          "Authorization": `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ data: profileData })
+      });
+
+      if (!response.ok) {
+        // This attempts to read FastAPI's detailed error message
+        const errorDetails = await response.text(); 
+        console.error(`Backend rejected with status ${response.status}:`, errorDetails);
+        
+        // Try to parse it as JSON to show a clean message, otherwise show generic
+        try {
+          const parsed = JSON.parse(errorDetails);
+          throw new Error(parsed.detail || `Server Error: ${response.status}`);
+        } catch {
+          throw new Error(`Server Error: ${response.status}`);
+        }
+      }
+
+      setStatusMessage({ type: 'success', text: 'Profile successfully saved to your encrypted vault.' });
+      
+      setTimeout(() => setStatusMessage({ type: '', text: '' }), 3000);
+
+    } catch (error: any) {
+      console.error("Save error:", error);
+      setStatusMessage({ type: 'error', text: error.message || "An error occurred while saving." });
+    } finally {
       setIsSaving(false);
-    }, 800);
+    }
   };
+
+  if (isLoading) {
+    return <div className="animate-pulse text-slate-500">Decrypting your vault...</div>;
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -69,7 +137,7 @@ export default function ProfileRepository() {
       </div>
 
       {/* Form Container */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden relative">
         <form onSubmit={handleSave} className="flex flex-col h-full">
           <div className="p-6 md:p-8 space-y-8 flex-1">
             
@@ -181,12 +249,19 @@ export default function ProfileRepository() {
             </div>
           </div>
 
-          {/* Footer Action */}
-          <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end mt-auto">
+          {/* Footer Action & Status Message */}
+          <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-between items-center mt-auto">
+            <div className="flex-1">
+              {statusMessage.text && (
+                <span className={`text-sm font-medium ${statusMessage.type === 'error' ? 'text-red-600' : 'text-emerald-600'}`}>
+                  {statusMessage.text}
+                </span>
+              )}
+            </div>
             <button 
               type="submit" 
               disabled={isSaving}
-              className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-medium py-2.5 px-6 rounded-lg transition-colors shadow-sm flex items-center gap-2"
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-medium py-2.5 px-6 rounded-lg transition-colors shadow-sm flex items-center gap-2 min-w-[160px] justify-center"
             >
               {isSaving ? 'Saving...' : 'Save Profile Data'}
             </button>
