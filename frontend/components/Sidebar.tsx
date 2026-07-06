@@ -49,84 +49,112 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
 
   return (
     <aside 
-      className={`h-screen bg-slate-900 border-r border-slate-800 text-slate-400 flex flex-col justify-between shrink-0 transition-all duration-300 relative
-        ${isCollapsed ? 'w-20' : 'w-64'}`}
+      className={`h-screen bg-slate-900 border-r border-slate-800 text-slate-400 flex flex-col justify-between shrink-0 transition-all duration-300 relative z-20
+        ${isCollapsed ? 'w-20' : 'w-72'}`}
     >
-      {/* Top Section: App Branding & Collapse Toggle */}
-      <div>
-        <div className={`h-16 flex items-center border-b border-slate-800 px-4 ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
-          {!isCollapsed && (
-            <div className="flex items-center gap-3 font-black text-xl text-white tracking-wider transition-opacity duration-200">
-              
-              {/* --- EDIT LOGO SIZE HERE --- */}
-              {/* Change h-8 to h-10 (40px) or h-12 (48px) to make it even bigger */}
+      {/* NEW: Floating Toggle Button moved outside to hang on the border perfectly */}
+      <button 
+        onClick={() => setIsCollapsed(!isCollapsed)}
+        className="absolute top-10 -right-3.5 w-7 h-7 flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 hover:text-white transition-all z-50 shadow-md"
+        title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+      >
+        <svg 
+          className={`w-4 h-4 transition-transform duration-300 ${isCollapsed ? 'rotate-180' : ''}`} 
+          fill="none" 
+          stroke="currentColor" 
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+        </svg>
+      </button>
+
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+        
+        {/* Top Section: App Branding */}
+        <div className="p-5 border-b border-slate-800/80 relative min-h-24 flex flex-col justify-center">
+          <div className={`flex items-center gap-4 ${isCollapsed ? 'justify-center' : 'justify-start'}`}>
+            
+            {/* RESTORED: The Logo Box Placeholder */}
+            <div className="w-12 h-12 rounded-2xl bg-white flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(255,255,255,0.1)]">
               <img 
-                src="/logo_nobg_inv2.png" 
+                src="/logo_nobg.png" 
                 alt="AXIS Logo" 
-                className="h-12 w-auto object-contain" 
+                className="w-8 h-8 object-contain" 
               />
-              
-              <span className="text-blue-500">A.X.I.S.</span>
             </div>
-          )}
-          
-          <button 
-            onClick={() => setIsCollapsed(!isCollapsed)}
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 hover:text-white transition-colors"
-            title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-          >
-            <svg 
-              className={`w-5 h-5 transition-transform duration-300 ${isCollapsed ? 'rotate-180' : ''}`} 
-              fill="none" 
-              stroke="currentColor" 
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-            </svg>
-          </button>
+
+            {/* Titles (Hidden when collapsed) */}
+            {!isCollapsed && (
+              <div className="flex flex-col min-w-0 transition-opacity duration-200">
+                <span className="font-black text-2xl text-white tracking-wide">A.X.I.S.</span>
+                <span className="text-[11px] text-slate-400 font-medium truncate mt-0.5">Automated eXtraction & Integration</span>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Navigation Tabs List */}
-        <nav className="p-3 space-y-1.5">
-          {navigationItems.map((item) => {
-            const isActive = activeTab === item.name;
-            return (
-              <button
-                key={item.name}
-                onClick={() => setActiveTab(item.name)}
-                className={`w-full flex items-center rounded-xl transition-all duration-150 group relative
-                  ${isCollapsed ? 'justify-center p-3' : 'gap-3 px-4 py-3'}
-                  ${isActive 
-                    ? 'bg-blue-600 text-white font-bold shadow-md shadow-blue-600/10' 
-                    : 'hover:bg-slate-800/60 hover:text-slate-200 font-medium'}`}
-              >
-                {/* Tab Icon */}
-                <span className={`${isActive ? 'text-white' : 'text-slate-400 group-hover:text-blue-400 transition-colors'}`}>
-                  {item.icon}
-                </span>
+        {/* Navigation Area */}
+        <div className="p-4">
+          
+          {/* Faint NAVIGATION title */}
+          {!isCollapsed && (
+            <div className="px-3 pb-3 pt-1 text-[10px] font-bold text-slate-500 tracking-widest uppercase transition-opacity duration-200">
+              Navigation
+            </div>
+          )}
+          {isCollapsed && <div className="h-6"></div>}
 
-                {/* Tab Label Text - Hidden gracefully when collapsed */}
-                <span className={`text-sm whitespace-nowrap transition-all duration-300 overflow-hidden
-                  ${isCollapsed ? 'w-0 opacity-0 pointer-events-none' : 'w-auto opacity-100'}`}
+          {/* Navigation Tabs List */}
+          <nav className="space-y-1.5">
+            {navigationItems.map((item) => {
+              const isActive = activeTab === item.name;
+              return (
+                <button
+                  key={item.name}
+                  onClick={() => setActiveTab(item.name)}
+                  className={`w-full flex items-center rounded-xl transition-all duration-150 group relative
+                    ${isCollapsed ? 'justify-center p-3' : 'px-4 py-3'}
+                    ${isActive 
+                      ? 'bg-indigo-600 text-white font-semibold shadow-lg shadow-indigo-600/20' 
+                      : 'hover:bg-slate-800/60 text-slate-400 hover:text-slate-200 font-medium'}`}
                 >
-                  {item.name}
-                </span>
+                  <div className="flex items-center gap-3 w-full">
+                    {/* Tab Icon */}
+                    <span className={`${isActive ? 'text-white' : 'text-slate-400 group-hover:text-indigo-400 transition-colors'}`}>
+                      {item.icon}
+                    </span>
 
-                {/* Modern Hover Tooltip Popover (Only visible when collapsed) */}
-                {isCollapsed && (
-                  <div className="absolute left-full ml-4 px-2.5 py-1.5 bg-slate-950 text-white text-xs font-semibold rounded-md opacity-0 pointer-events-none translate-x-2.5 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200 z-50 whitespace-nowrap shadow-xl border border-slate-800">
-                    {item.name}
+                    {/* Tab Label Text */}
+                    <span className={`text-[15px] whitespace-nowrap transition-all duration-300 overflow-hidden text-left flex-1
+                      ${isCollapsed ? 'w-0 opacity-0 pointer-events-none' : 'w-auto opacity-100'}`}
+                    >
+                      {item.name}
+                    </span>
+
+                    {/* Chevron Arrow on Active Tab */}
+                    {!isCollapsed && isActive && (
+                      <svg className="w-4 h-4 text-indigo-200 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                      </svg>
+                    )}
                   </div>
-                )}
-              </button>
-            );
-          })}
-        </nav>
+
+                  {/* Tooltip */}
+                  {isCollapsed && (
+                    <div className="absolute left-full ml-4 px-2.5 py-1.5 bg-slate-950 text-white text-xs font-semibold rounded-md opacity-0 pointer-events-none translate-x-2.5 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200 z-50 whitespace-nowrap shadow-xl border border-slate-800">
+                      {item.name}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
       </div>
 
       {/* Bottom Minimal Footer Strip */}
       <div className="p-4 border-t border-slate-800 flex items-center justify-center bg-slate-950/20 text-[10px] uppercase tracking-wider font-bold text-slate-600">
-        {isCollapsed ? <span className="text-blue-500 text-xs">⎔</span> : <span>System v1.0</span>}
+        {isCollapsed ? <span className="text-indigo-500 text-xs">⎔</span> : <span>System v1.0</span>}
       </div>
     </aside>
   );
