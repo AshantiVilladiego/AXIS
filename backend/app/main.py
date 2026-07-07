@@ -6,6 +6,10 @@ from typing import Optional
 from app.api.v1.api import api_router
 from app.core.config import settings
 from app.services.fixed_prompts import get_fixed_answer
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.api.v1.api import api_router
+from app.core.config import settings
 
 # Initialize the application
 app = FastAPI(title=settings.app_name)
