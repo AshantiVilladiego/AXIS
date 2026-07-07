@@ -26,8 +26,9 @@ class DocumentService:
         if user_id:
             return user_id
         if settings.environment == "development" and settings.default_dev_user_id:
+            logger.warning("AUTH FALLBACK: Using DEFAULT_DEV_USER_ID for unauthenticated request.") # Add this
             return settings.default_dev_user_id
-        raise ValueError("user_id required.")
+        raise ValueError("user_id required: Authentication token missing.")
 
     async def process_upload(
         self,
@@ -41,7 +42,6 @@ class DocumentService:
             content = await file.read()
             
             # --- STORAGE PHASE ---
-            # Path format: <user_id>/<filename> matches your RLS policy (storage.foldername(name))[1]
             unique_id = uuid.uuid4().hex[:6]
             if '.' in file.filename:
                 filename_base, extension = file.filename.rsplit('.', 1)
@@ -69,7 +69,6 @@ class DocumentService:
                 normalized_data = self._normalize_extraction(extracted_data)
                 ai_results = normalized_data.get("data", {})
             except Exception as ai_exc:
-                # CHANGE THIS LOG LINE
                 logger.error("AI/OCR Extraction Pipeline Failed. Reason: %s", str(ai_exc))
                 db_status = "Error"
 
@@ -115,8 +114,9 @@ class DocumentService:
 
             await db.commit()
 
-            return {
-                "id": str(new_form_id), # <-- ADD THIS LINE
+            # Construct and return the payload once
+            response_payload = {
+                "id": str(new_form_id),
                 "form_details": {
                     "user_id": resolved_user_id,
                     "filename": file.filename,
@@ -126,6 +126,9 @@ class DocumentService:
                 "form_type": form_type,
                 "status": "success" if db_status == "Success" else "failed",
             }
+            
+            logger.info(f"Sending response payload: {json.dumps(response_payload)}")
+            return response_payload
 
         except Exception as exc:
             await db.rollback()

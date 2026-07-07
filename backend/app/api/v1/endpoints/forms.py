@@ -46,41 +46,57 @@ async def upload_document(
 import requests
 from fastapi import Response, Body
 from app.services.pdf_generator import PDFGeneratorService
+import httpx # Use httpx instead of requests
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Depends, Response, Body
+from sqlalchemy import text
 
 @router.post("/{form_id}/generate")
 async def generate_filled_form(
     form_id: str,
-    mapping_data: list[dict] = Body(...), # The coordinates and text from the frontend
+    mapping_data: list[dict] = Body(...),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id)
+    user_id: str | None = Depends(get_current_user_id) # 1. Allow None so we can handle it safely
 ):
     """Generates a filled PDF and returns it directly to the browser for download."""
     
-    # 1. Fetch the original file_url from the DB using the form_id
-    query = text("SELECT file_url FROM forms WHERE id = :id AND user_id = :user_id")
-    result = await db.execute(query, {"id": form_id, "user_id": user_id})
-    row = result.fetchone()
+    # 2. Apply the local development auth fallback logic
+    try:
+        resolved_user_id = document_service._resolve_user_id(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+    
+    # 3. Fetch the original file_url from the DB using the resolved ID
+    query = text("SELECT file_url FROM forms WHERE id = CAST(:id AS UUID) AND user_id = CAST(:user_id AS UUID)")
+    result = await db.execute(query, {"id": form_id, "user_id": resolved_user_id})
+    row = result.scalar_one_or_none()
     
     if not row:
         raise HTTPException(status_code=404, detail="Original form not found in database.")
         
-    file_url = row[0]
+    file_url = row 
     
-    # 2. Download the original blank PDF from your Supabase storage
+    # 4. Download the original blank PDF asynchronously using httpx
     try:
-        response = requests.get(file_url)
-        response.raise_for_status()
-        original_bytes = response.content
+        async with httpx.AsyncClient() as client:
+            response = await client.get(file_url)
+            response.raise_for_status() 
+            original_bytes = response.content
+    except httpx.HTTPStatusError as exc:
+        error_msg = f"Supabase blocked the download (HTTP {exc.response.status_code}). Check if bucket is Public."
+        logger.error(f"{error_msg} URL: {exc.request.url}")
+        raise HTTPException(status_code=500, detail=error_msg)
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Could not retrieve the original PDF from storage.")
+        logger.error(f"Storage download failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Network Error: {str(e)}")
     
-    # 3. Inject the data into the PDF
+    # 5. Inject the data into the PDF
     try:
         filled_pdf_bytes = PDFGeneratorService.fill_pdf(original_bytes, mapping_data)
     except Exception as e:
+        logger.error(f"PDF filling failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"PDF Generation failed: {str(e)}")
     
-    # 4. Return the file as a direct download attachment
+    # 6. Return the file as a direct download attachment
     return Response(
         content=filled_pdf_bytes, 
         media_type="application/pdf",

@@ -24,6 +24,7 @@ class ExtractedFieldCreate(BaseModel):
 # --- 3. Combined Payload ---
 class DocumentExtractionResponse(BaseModel):
     """The master schema: what the frontend receives after a successful AI run."""
+    id: str  # <--- THE CRITICAL FIX: FastAPI will now allow the ID to pass through
     form_details: FormCreate
     extracted_data: List[ExtractedFieldCreate]
     # Echoes back the form_type the caller submitted (or the AI's
