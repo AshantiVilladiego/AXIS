@@ -55,27 +55,32 @@ async def generate_filled_form(
     form_id: str,
     mapping_data: list[dict] = Body(...),
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Depends(get_current_user_id) # 1. Allow None so we can handle it safely
+    user_id: str | None = Depends(get_current_user_id)
 ):
     """Generates a filled PDF and returns it directly to the browser for download."""
     
-    # 2. Apply the local development auth fallback logic
     try:
         resolved_user_id = document_service._resolve_user_id(user_id)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc))
     
-    # 3. Fetch the original file_url from the DB using the resolved ID
-    query = text("SELECT file_url FROM forms WHERE id = CAST(:id AS UUID) AND user_id = CAST(:user_id AS UUID)")
+    # 1. Fetch file_url, filename, AND form_type from the DB
+    query = text("""
+        SELECT file_url, filename, form_type 
+        FROM forms 
+        WHERE id = CAST(:id AS UUID) AND user_id = CAST(:user_id AS UUID)
+    """)
     result = await db.execute(query, {"id": form_id, "user_id": resolved_user_id})
-    row = result.scalar_one_or_none()
+    row = result.fetchone() # Note: Back to fetchone() since we are grabbing 3 columns
     
     if not row:
         raise HTTPException(status_code=404, detail="Original form not found in database.")
         
-    file_url = row 
+    file_url = row.file_url 
+    filename = row.filename
+    form_type = row.form_type
     
-    # 4. Download the original blank PDF asynchronously using httpx
+    # 2. Download the original document
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(file_url)
@@ -89,14 +94,14 @@ async def generate_filled_form(
         logger.error(f"Storage download failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Network Error: {str(e)}")
     
-    # 5. Inject the data into the PDF
+    # 3. Inject the data into the PDF (Passing form_type and filename!)
     try:
-        filled_pdf_bytes = PDFGeneratorService.fill_pdf(original_bytes, mapping_data)
+        filled_pdf_bytes = PDFGeneratorService.fill_pdf(original_bytes, mapping_data, form_type, filename)
     except Exception as e:
         logger.error(f"PDF filling failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"PDF Generation failed: {str(e)}")
     
-    # 6. Return the file as a direct download attachment
+    # 4. Return the file
     return Response(
         content=filled_pdf_bytes, 
         media_type="application/pdf",

@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
-
+from app.api.v1.endpoints import chatbot
 from app.api.v1.api import api_router
 from app.core.config import settings
 from app.services.fixed_prompts import get_fixed_answer
@@ -29,7 +29,7 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
-
+app.include_router(chatbot.router, prefix="/api/chatbot", tags=["chatbot"])
 
 # --- Chatbot Data Models ---
 class FixedPromptRequest(BaseModel):
