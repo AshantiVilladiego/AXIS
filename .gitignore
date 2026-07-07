@@ -155,4 +155,4 @@ __pycache__/
 # Python virtual environment
 venv/
 env/
-.env/
+.env/.

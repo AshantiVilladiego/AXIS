@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import SupabaseProvider from '../components/providers/SupabaseProvider';
+import { AssistantWidget } from '@/components/chatbot/AssistantWidget';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -33,6 +34,7 @@ export default function RootLayout({
             </main>
           </div>
         </SupabaseProvider>
+        <AssistantWidget />
       </body>
     </html>
   );
