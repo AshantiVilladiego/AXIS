@@ -29,7 +29,7 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
-app.include_router(chatbot.router, prefix="/api/chatbot", tags=["chatbot"])
+app.include_router(chatbot.router)
 
 # --- Chatbot Data Models ---
 class FixedPromptRequest(BaseModel):

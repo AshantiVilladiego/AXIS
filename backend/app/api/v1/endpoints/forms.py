@@ -1,16 +1,14 @@
 import logging
-import requests
-from fastapi import Response, Body
-from app.services.pdf_generator import PDFGeneratorService
-
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Depends
+import httpx
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Depends, Response, Body
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
 from app.core.auth import get_current_user_id
 from app.db.session import get_db
 from app.schema import DocumentExtractionResponse
-
 from app.services.document_service import DocumentService
+from app.services.pdf_generator import PDFGeneratorService
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +41,6 @@ async def upload_document(
         logger.exception("Upload processing failed for %s", file.filename)
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(exc)}") from exc
     
-import requests
-from fastapi import Response, Body
-from app.services.pdf_generator import PDFGeneratorService
-import httpx # Use httpx instead of requests
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Depends, Response, Body
-from sqlalchemy import text
-
 @router.post("/{form_id}/generate")
 async def generate_filled_form(
     form_id: str,
@@ -58,7 +49,19 @@ async def generate_filled_form(
     user_id: str | None = Depends(get_current_user_id)
 ):
     """Generates a filled PDF and returns it directly to the browser for download."""
-    
+
+    # Guard against malformed payloads (e.g. a stray {} or an entry missing
+    # "field_name") reaching the PDF engine, where they'd fail deep inside
+    # PyMuPDF with a much less useful error.
+    if not mapping_data:
+        raise HTTPException(status_code=400, detail="No field data was provided to fill in.")
+    for idx, item in enumerate(mapping_data):
+        if not isinstance(item, dict) or "field_name" not in item:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Malformed field entry at index {idx}: expected an object with 'field_name'.",
+            )
+
     try:
         resolved_user_id = document_service._resolve_user_id(user_id)
     except ValueError as exc:
@@ -96,14 +99,29 @@ async def generate_filled_form(
     
     # 3. Inject the data into the PDF (Passing form_type and filename!)
     try:
-        filled_pdf_bytes = PDFGeneratorService.fill_pdf(original_bytes, mapping_data, form_type, filename)
+        filled_pdf_bytes, skipped_fields = PDFGeneratorService.fill_pdf(
+            original_bytes, mapping_data, form_type, filename
+        )
+    except ValueError as e:
+        # Clean, user-facing failures — unsupported form_type, corrupt
+        # upload, etc. — get a 422 rather than a generic 500.
+        logger.warning(f"PDF filling rejected: {str(e)}")
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        logger.error(f"PDF filling failed: {str(e)}")
+        logger.exception(f"PDF filling failed unexpectedly for form_id={form_id}")
         raise HTTPException(status_code=500, detail=f"PDF Generation failed: {str(e)}")
-    
-    # 4. Return the file
+
+    # 4. Return the file. Fields that couldn't be confidently placed on the
+    # page (no anchor match, or the target area already had content) are
+    # surfaced via a header so the frontend can warn the user rather than
+    # them silently getting a PDF that looks complete but isn't.
+    headers = {"Content-Disposition": f"attachment; filename=Filled_Form_{form_id}.pdf"}
+    if skipped_fields:
+        headers["X-Skipped-Fields"] = ",".join(skipped_fields)
+        headers["Access-Control-Expose-Headers"] = "X-Skipped-Fields"
+
     return Response(
-        content=filled_pdf_bytes, 
+        content=filled_pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=Filled_Form_{form_id}.pdf"}
+        headers=headers,
     )
