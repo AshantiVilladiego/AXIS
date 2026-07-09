@@ -1,6 +1,7 @@
 {
   "name": "axis-frontend",
   "version": "0.1.0",
+  "packageManager": "pnpm@24.18.0"
   "private": true,
   "scripts": {
     "dev": "next dev",
