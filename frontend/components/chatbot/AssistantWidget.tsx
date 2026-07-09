@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { sendFixedPromptRequest, ChatbotRequestError } from '@/lib/api';
 import { getChatbotCopy } from '@/lib/i18n';
+import { usePathname } from 'next/navigation';
+
 import type {
   ChatMessage,
   ChatModelProvider,
@@ -39,6 +41,7 @@ function loadPrefs(): { model: ChatModelProvider } {
 }
 
 export function AssistantWidget({ formContext }: AssistantWidgetProps) {
+  const pathname = usePathname();
   const initialPrefs = useRef(loadPrefs());
   const [isOpen, setIsOpen] = useState(false);
   const [model, setModel] = useState<ChatModelProvider>(initialPrefs.current.model);
@@ -137,6 +140,10 @@ export function AssistantWidget({ formContext }: AssistantWidgetProps) {
     ]);
     setError(null);
     setPendingFixedPrompt(null);
+  }
+
+  if (pathname && pathname.includes('/dashboard')) {
+    return null; // Hide the floating widget entirely on the dashboard
   }
 
   return (
