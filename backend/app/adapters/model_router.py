@@ -2,7 +2,7 @@ import logging
 from app.adapters.dummy import DummyAdapter
 
 from app.adapters.providers import (
-    GeminiAdapter, GroqAdapter, HFAdapter, LocalOCRAdapter, ProviderUnavailableError
+    GeminiAdapter, GroqAdapter, HFAdapter, ProviderUnavailableError
 )
 
 class ModelRouter:
@@ -14,8 +14,6 @@ class ModelRouter:
             GeminiAdapter(),     # 1. Primary AI
             GroqAdapter(),       # 2. Fast AI Backup
             HFAdapter(),         # 3. Open Source AI Backup
-            LocalOCRAdapter()    # 4. Bulletproof Local Offline Backup
-            
         ]
         self.logger = logging.getLogger(__name__)
 

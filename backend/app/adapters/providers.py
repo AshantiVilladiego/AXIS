@@ -146,22 +146,3 @@ class HFAdapter(ModelAdapter):
 
     async def validate_data(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]: return extracted_data
     def get_provider_name(self) -> str: return "HuggingFace"
-
-class LocalOCRAdapter(ModelAdapter):
-    async def process_document(self, file_data: bytes, file_type: str) -> Dict[str, Any]:
-        try:
-            import pytesseract
-            from PIL import Image
-            import io
-            tesseract_path = os.path.join(os.getcwd(), "tesseract-bin", "tesseract.exe")
-            pytesseract.pytesseract.tesseract_cmd = tesseract_path
-            if not os.path.exists(tesseract_path): raise ProviderUnavailableError(f"Tesseract executable NOT FOUND at: {tesseract_path}")
-
-            page_images = _render_to_images(file_data, file_type, max_pages=1)
-            img = Image.open(io.BytesIO(page_images[0]))
-            return {"provider": "local_tesseract", "status": "success", "data": {"raw_extracted_text": pytesseract.image_to_string(img).strip()}, "model": "tesseract-ocr"}
-        except Exception as e:
-            raise ProviderUnavailableError(f"Local OCR failed: {str(e)}")
-
-    async def validate_data(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]: return extracted_data
-    def get_provider_name(self) -> str: return "Local OCR (Tesseract)"
