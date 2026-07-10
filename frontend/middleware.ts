@@ -35,19 +35,17 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // Refresh session if expired - this ensures the user stays logged in
-  const { data: { session } } = await supabase.auth.getSession();
+const {
+  data: { user },
+} = await supabase.auth.getUser();
 
-  // Redirect logic:
-  // 1. If user is NOT logged in and tries to access /dashboard, redirect to /login
-  if (!session && request.nextUrl.pathname.startsWith('/dashboard')) {
-    return NextResponse.redirect(new URL('/', request.url));
-  }
+if (!user && request.nextUrl.pathname.startsWith('/dashboard')) {
+  return NextResponse.redirect(new URL('/', request.url));
+}
 
-  // 2. If user IS logged in and tries to access /login, redirect to /dashboard
-  if (session && request.nextUrl.pathname.startsWith('/login')) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
-  }
+if (user && request.nextUrl.pathname.startsWith('/login')) {
+  return NextResponse.redirect(new URL('/dashboard', request.url));
+}
 
   return response;
 }
