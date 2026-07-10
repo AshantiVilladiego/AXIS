@@ -35,15 +35,13 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-const {
-  data: { user },
-} = await supabase.auth.getUser();
+const { data: { session } } = await supabase.auth.getSession();
 
-if (!user && request.nextUrl.pathname.startsWith('/dashboard')) {
+if (!session && request.nextUrl.pathname.startsWith('/dashboard')) {
   return NextResponse.redirect(new URL('/', request.url));
 }
 
-if (user && request.nextUrl.pathname.startsWith('/login')) {
+if (session && request.nextUrl.pathname.startsWith('/login')) {
   return NextResponse.redirect(new URL('/dashboard', request.url));
 }
 
