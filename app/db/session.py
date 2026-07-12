@@ -76,7 +76,7 @@ def _build_ssl_context() -> ssl.SSLContext:
     if not use_custom_ca:
         ctx = ssl.create_default_context(cafile=certifi.where())
     else:
-        ca_cert_pem = os.environ.get("SUPABASE_CA_CERT") or settings.db_ssl_ca_cert
+        ca_cert_pem = os.environ.get("SUPABASE_CA_CERT")
 
         if ca_cert_pem:
             ca_cert_pem = ca_cert_pem.replace("\\n", "\n")

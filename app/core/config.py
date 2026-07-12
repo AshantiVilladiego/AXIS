@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,8 +31,33 @@ class Settings(BaseSettings):
         default_factory=lambda: [
             "http://localhost:3000",
             "http://127.0.0.1:3000",
-        ]
+        ],
+        alias="CORS_ORIGINS",
     )
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, value):
+        """Allow CORS_ORIGINS to be a plain comma-separated string in
+        Vercel's env var UI (e.g. "https://a.com,https://b.com") instead
+        of requiring JSON list syntax. Local dev origins are always kept
+        so localhost never gets locked out by a production env var.
+        """
+        local_defaults = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+        if value is None or value == "":
+            return local_defaults
+
+        if isinstance(value, str):
+            parsed = [origin.strip() for origin in value.split(",") if origin.strip()]
+        elif isinstance(value, list):
+            parsed = value
+        else:
+            parsed = local_defaults
+
+        # Always keep local origins available, dedup while preserving order
+        combined = local_defaults + [o for o in parsed if o not in local_defaults]
+        return combined
 
     # Placeholder user ID used ONLY when environment == "development"
     default_dev_user_id: str | None = Field(

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -6,25 +6,18 @@ from app.api.v1.endpoints import chatbot
 from app.api.v1.api import api_router
 from app.core.config import settings
 from app.services.fixed_prompts import get_fixed_answer
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1.api import api_router
-from app.core.config import settings
-from fastapi import Response
 
 # Initialize the application
 app = FastAPI(title=settings.app_name)
-app = FastAPI()
 
 # Configure CORS (Michael's Code - required for React frontend)
 # --- BULLETPROOF CORS CONFIGURATION ---
-# Hardcoding the local origins prevents Pydantic .env stringification bugs
+# Origins come from settings.cors_origins, which reads CORS_ORIGINS from
+# the environment (comma-separated) and always keeps localhost available
+# for local dev -- see app/core/config.py for the parsing logic.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
-    ],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
