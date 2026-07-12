@@ -60,30 +60,24 @@ def _build_engine_setup() -> tuple[URL, dict]:
 
 
 def _build_ssl_context() -> ssl.SSLContext:
-    """Builds a verified SSL context trusting Supabase's own CA
-    (prod-ca-2021.crt). Both the direct-connection host and the pooler
-    chain up through Supabase's private CA hierarchy -- there is no
-    public CA involved, so certifi's bundle cannot verify this chain.
-
-    Supabase's CA cert is missing the keyUsage extension, which trips
-    Python 3.13's default VERIFY_X509_STRICT flag (new RFC 5280
-    enforcement). We clear only that one flag; everything else --
-    hostname matching, full chain validation, expiry -- stays enforced.
-    This is a narrow, documented compatibility exception, not a
-    reduction in overall verification.
-    """
-    ca_file = settings.db_ssl_ca_file or "certs/prod-ca-2021.crt"
+    """Builds a verified SSL context trusting Supabase's own CA."""
+    
+    # Dynamically resolve path: get the directory of the current file (session.py),
+    # move up to the project root, then down to 'certs/prod-ca-2021.crt'.
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+    
+    # If settings.db_ssl_ca_file is set, use it; otherwise use the dynamic path
+    ca_file = settings.db_ssl_ca_file or os.path.join(project_root, 'certs', 'prod-ca-2021.crt')
 
     if not os.path.isfile(ca_file):
         raise FileNotFoundError(
-            f"Supabase CA file not found at {ca_file!r}. Download it from "
-            "Supabase Dashboard -> Project Settings -> Database -> SSL Configuration."
+            f"Supabase CA file not found at {ca_file!r}. Verify it is in the project root."
         )
 
     ctx = ssl.create_default_context(cafile=ca_file)
 
-    # Targeted compatibility fix for Supabase's CA cert (missing keyUsage
-    # extension), not a general verification bypass.
+    # Targeted compatibility fix for Supabase's CA cert
     if hasattr(ssl, "VERIFY_X509_STRICT"):
         ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
 
