@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.api import api_router
 from app.core.config import settings
+from fastapi import Response
 
 # Initialize the application
 app = FastAPI(title=settings.app_name)
@@ -72,3 +73,7 @@ async def root():
         "health_check": "/api/health",
         "docs": "/docs",
     }
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)

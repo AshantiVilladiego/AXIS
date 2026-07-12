@@ -1,9 +1,9 @@
 fastapi
 uvicorn[standard]
 python-dotenv
-asyncpg
-sqlalchemy
-pydantic-settings
+asyncpg>=0.29,<0.30
+sqlalchemy>=2.0,<2.1
+pydantic-settings>=2.0,<3.0
 python-multipart
 pyJWT
 pyMuPDF
@@ -11,9 +11,8 @@ pypdf
 Pillow
 tenacity
 certifi
-supabase
+supabase>=2.0,<3.0
 google-genai
 groq
 huggingface_hub
 httpx
-fastapi

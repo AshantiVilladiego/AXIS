@@ -60,23 +60,40 @@ def _build_engine_setup() -> tuple[URL, dict]:
 
 
 def _build_ssl_context() -> ssl.SSLContext:
-    """Builds a verified SSL context trusting Supabase's CA."""
-    # Get the absolute path to the directory containing this file (session.py)
-    current_dir = os.path.dirname(os.path.abspath(__file__))
+    """Builds a verified SSL context for connecting to Supabase Postgres.
 
-    # Move up to the project root (adjusting based on how many folders deep session.py is)
-    # If session.py is in app/db/, we move up 2 levels to reach the root.
-    project_root = os.path.dirname(os.path.dirname(current_dir))
+    Tries the public CA bundle (certifi) first -- Supabase's pooler cert
+    is signed by a publicly trusted CA in most projects, so this usually
+    just works with zero extra config. Falls back to a project-specific
+    CA (env var, then local file) only if certifi's bundle doesn't
+    validate the connection, since some pooler configs use a
+    Supabase-specific intermediate cert.
+    """
+    import certifi
 
-    # Combine to form the absolute path to the certificate
-    ca_file = settings.db_ssl_ca_file or os.path.join(project_root, 'certs', 'prod-ca-2021.crt')
+    use_custom_ca = os.environ.get("SUPABASE_USE_CUSTOM_CA") == "1"
 
-    if not os.path.isfile(ca_file):
-        raise FileNotFoundError(
-            f"Supabase CA file not found at '{ca_file}'. Please verify the path."
-        )
+    if not use_custom_ca:
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    else:
+        ca_cert_pem = os.environ.get("SUPABASE_CA_CERT") or settings.db_ssl_ca_cert
 
-    ctx = ssl.create_default_context(cafile=ca_file)
+        if ca_cert_pem:
+            ca_cert_pem = ca_cert_pem.replace("\\n", "\n")
+            ctx = ssl.create_default_context(cadata=ca_cert_pem)
+        else:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(current_dir))
+            ca_file = settings.db_ssl_ca_file or os.path.join(
+                project_root, "certs", "prod-ca-2021.crt"
+            )
+
+            if not os.path.isfile(ca_file):
+                raise FileNotFoundError(
+                    f"SUPABASE_USE_CUSTOM_CA=1 is set but no custom CA was found. "
+                    f"Set SUPABASE_CA_CERT (PEM contents) or place a file at '{ca_file}'."
+                )
+            ctx = ssl.create_default_context(cafile=ca_file)
 
     # Compatibility fix for Supabase CA
     if hasattr(ssl, "VERIFY_X509_STRICT"):
