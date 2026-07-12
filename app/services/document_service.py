@@ -83,16 +83,16 @@ class DocumentService:
         try:
             resolved_user_id = self._resolve_user_id(user_id)
             content = await file.read()
-            
-            unique_id = uuid.uuid4().hex[:6]
-            if '.' in file.filename:
-                filename_base, extension = file.filename.rsplit('.', 1)
-                unique_filename = f"{filename_base}_{unique_id}.{extension}"
-            else: unique_filename = f"{file.filename}_{unique_id}"
-                
-            storage_path = f"{resolved_user_id}/{unique_filename}"
-            self.supabase.storage.from_("documents").upload(path=storage_path, file=content, file_options={"content-type": file.content_type})
-            file_url = self.supabase.storage.from_("documents").get_public_url(storage_path)
+
+            # NOTE: The original file is intentionally NOT uploaded to Supabase
+            # Storage here. It only ever lives in memory for this request, long
+            # enough to run AI extraction. The browser hangs onto the same File
+            # object (UploadForm.tsx keeps `selectedFile` in React state through
+            # the review/edit flow) and re-sends it later to /api/{form_id}/generate,
+            # which is the only step that writes anything to storage — the
+            # final, stamped PDF. This keeps raw source documents out of the
+            # bucket entirely; only finalized output is persisted.
+            file_url = None
 
             db_status = "Success"
             ai_results = {}
@@ -107,6 +107,10 @@ class DocumentService:
                 db_status = "Error"
 
             new_form_id = uuid.uuid4()
+            # file_url is deliberately NULL at this point — it's populated
+            # later by /api/{form_id}/generate once the stamped PDF exists.
+            # This requires the `forms.file_url` column to be nullable; if it
+            # currently has a NOT NULL constraint, drop that constraint first.
             form_query = text("INSERT INTO forms (id, user_id, filename, file_url, form_type, status) VALUES (:id, :user_id, :filename, :file_url, :form_type, :status)")
             await db.execute(form_query, {"id": new_form_id, "user_id": resolved_user_id, "filename": file.filename, "file_url": file_url, "form_type": form_type, "status": db_status})
 

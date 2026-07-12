@@ -10,6 +10,9 @@ const inter = Inter({ subsets: ['latin'] });
 export const metadata: Metadata = {
   title: 'A.X.I.S. | Document Extraction',
   description: 'Automated eXtraction & Integration System',
+  icons: {
+    icon: '/logo_nobg.png',
+  },
 };
 
 export default function RootLayout({

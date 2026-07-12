@@ -1,10 +1,10 @@
 import logging
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from pydantic import BaseModel
-from app.services.document_service import DocumentService # <--- ADD THIS IMPORT
+from app.services.document_service import DocumentService
 
 from app.core.auth import get_current_user_id
 from app.db.session import get_db
@@ -20,7 +20,9 @@ class HistoryRecord(BaseModel):
     date: str
     score: float
     status: str
-    file_url: str
+    # CRITICAL FIX: Make file_url Optional so pending/unstamped forms
+    # do not trigger a Pydantic 500 validation error when loading the table.
+    file_url: Optional[str] = None
 
 @router.get("/", response_model=List[HistoryRecord])
 async def get_processing_history(
