@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server';
 
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   // Create an unmodified response first
   let response = NextResponse.next({
     request: {
