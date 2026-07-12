@@ -13,6 +13,7 @@ from app.core.config import settings
 
 # Initialize the application
 app = FastAPI(title=settings.app_name)
+app = FastAPI()
 
 # Configure CORS (Michael's Code - required for React frontend)
 # --- BULLETPROOF CORS CONFIGURATION ---

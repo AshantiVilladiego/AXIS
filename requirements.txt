@@ -16,3 +16,4 @@ google-genai
 groq
 huggingface_hub
 httpx
+fastapi
