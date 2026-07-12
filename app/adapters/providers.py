@@ -68,6 +68,13 @@ EXTRACTION_PROMPT = (
     "2. Group names logically into objects (e.g., 'registrant_name', 'father_name', 'mother_name', 'spouse_name').\n"
     "3. Group repeating lists into arrays (e.g., 'children': [ {'last_name': '...', 'first_name': '...'} ]).\n"
     "4. If a field is blank, set its value to null.\n"
+    "5. Add one extra top-level key, \"_self_field_groups\": an array listing the "
+    "exact group names from step 2 (and any other top-level group names you used) "
+    "that describe the APPLICANT/REGISTRANT who is filling out this form — NEVER "
+    "their father, mother, spouse, children, or other beneficiaries/dependents, "
+    "even if a group's fields look identical in shape (e.g., a 'last_name' inside "
+    "'father_name' is NOT a self field, but the one inside 'registrant_name' is). "
+    "This key must always be present, even if it's an empty array.\n"
     "Do not include markdown formatting or code blocks."
 )
 

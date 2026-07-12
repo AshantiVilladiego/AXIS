@@ -29,6 +29,9 @@ export interface ChatRequestPayload {
   model: ChatModelProvider;
   formContext?: FormContext;
   history: { role: 'user' | 'assistant'; text: string }[];
+  // Leaf field names still blank on the form (e.g. "citymunicipality").
+  // Lets the backend tell "Quezon City" apart from ordinary small talk.
+  missingFields?: string[];
 }
 
 export interface FixedPromptRequestPayload {
@@ -41,4 +44,7 @@ export interface FixedPromptRequestPayload {
 export interface ChatResponsePayload {
   reply: string;
   steps?: string[];
+  // {field_name: value} the model captured from free-chat, if any — merge
+  // into conversationalOverrides the same way slot-filling answers are.
+  fieldUpdates?: Record<string, string> | null;
 }

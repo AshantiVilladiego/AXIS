@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -33,6 +34,21 @@ SYSTEM_PROMPT_TEMPLATE = {
 }
 
 STEP_LINE_PATTERN = re.compile(r"^\s*(?:\d+[\.\)]|[-*•])\s+(.*)")
+
+# Runs as a second, cheap call alongside the normal chat reply so free-chat
+# messages can ALSO populate form fields, not just answer questions. Kept as
+# a separate call (rather than folding into the main reply) so the tagged
+# JSON format never leaks into what the user actually sees, and so a
+# malformed/empty extraction never breaks the conversational reply itself.
+FIELD_EXTRACTION_INSTRUCTION = (
+    "The user is chatting with a government-form assistant. These field names "
+    "still need a value on their form:\n{field_list}\n\n"
+    "Read ONLY the user's latest message below and decide whether it supplies "
+    "a value for any of these fields. Respond with ONLY a raw JSON object — "
+    "no markdown, no code fences, no commentary — mapping field_name to the "
+    "value given, using ONLY field names from the list above. If the message "
+    "doesn't supply a value for any listed field, respond with exactly {{}}."
+)
 
 FIELD_QUESTION_INSTRUCTION = {
     "en": (
@@ -72,6 +88,7 @@ class ChatbotReply:
     model_used: str | None = None
     guide: str | None = None
     options: list[str] = field(default_factory=list)
+    field_updates: dict[str, str] = field(default_factory=dict)
 
 
 class ChatbotService:
@@ -130,6 +147,47 @@ class ChatbotService:
                 break
         raise last_error
 
+    def _parse_field_updates_safely(self, text: str, allowed_fields: set[str]) -> dict[str, str]:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            cleaned = "\n".join(lines).strip()
+
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError:
+            # A malformed extraction should never break the actual chat
+            # reply — just log it and treat this message as "no field data".
+            logger.warning("Field-extraction call returned non-JSON: %r", text[:200])
+            return {}
+
+        if not isinstance(parsed, dict):
+            return {}
+        return {
+            str(k): str(v) for k, v in parsed.items()
+            if k in allowed_fields and v not in (None, "")
+        }
+
+    async def _extract_field_updates(self, message: str, missing_fields: list[str], preferred_model: str) -> dict[str, str]:
+        if not missing_fields:
+            return {}
+        field_list = "\n".join(f"- {f}" for f in missing_fields)
+        instruction = FIELD_EXTRACTION_INSTRUCTION.format(field_list=field_list)
+        messages = [
+            {"role": "system", "content": instruction},
+            {"role": "user", "content": message},
+        ]
+        try:
+            raw_text, _ = await self._run_provider_chain(messages, preferred_model)
+        except ChatAdapterError as exc:
+            logger.warning("Field-extraction call failed, skipping field capture: %s", exc)
+            return {}
+        return self._parse_field_updates_safely(raw_text, set(missing_fields))
+
     async def _run_provider_chain(self, messages: list[dict], preferred_model: str) -> tuple[str, str]:
         provider_order = [preferred_model] + [p for p in FALLBACK_ORDER if p != preferred_model]
         errors = []
@@ -143,10 +201,14 @@ class ChatbotService:
                 continue
         raise ChatAdapterError("chatbot_service", f"All providers failed. Details: {'; '.join(errors)}")
 
-    async def get_reply(self, *, message: str, language: str, preferred_model: str, form_context: FormContext | None = None, history: list[ChatTurn] | None = None) -> ChatbotReply:
+    async def get_reply(self, *, message: str, language: str, preferred_model: str, form_context: FormContext | None = None, history: list[ChatTurn] | None = None, missing_fields: list[str] | None = None) -> ChatbotReply:
         messages = self._build_messages(message, language, form_context, history or [])
         reply_text, provider = await self._run_provider_chain(messages, preferred_model)
-        return ChatbotReply(reply=reply_text, steps=self._extract_steps(reply_text), model_used=provider)
+        field_updates = await self._extract_field_updates(message, missing_fields or [], preferred_model)
+        return ChatbotReply(
+            reply=reply_text, steps=self._extract_steps(reply_text),
+            model_used=provider, field_updates=field_updates,
+        )
 
     async def get_field_question(self, *, field_name: str, language: str = "en", preferred_model: str, field_label: str | None = None, form_context: FormContext | None = None) -> ChatbotReply:
         label = field_label or field_name.replace("_", " ")

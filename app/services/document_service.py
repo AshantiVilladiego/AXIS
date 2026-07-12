@@ -96,11 +96,19 @@ class DocumentService:
 
             db_status = "Success"
             ai_results = {}
+            self_field_groups: list[str] = []
 
             try:
                 extracted_data = await self.router.route_process_document(content, file.content_type)
                 normalized_data = self._normalize_extraction(extracted_data)
                 raw_data = normalized_data.get("data", {})
+                # Pulled out before validation/flattening so it's never treated
+                # as a real form field — this is metadata about the OTHER
+                # fields (which top-level groups are the registrant's own info
+                # vs. a relative's/beneficiary's), used by the frontend to
+                # stop profile auto-fill from bleeding onto e.g. father_name.
+                if isinstance(raw_data, dict):
+                    self_field_groups = raw_data.pop("_self_field_groups", []) or []
                 ai_results = self._validate_extraction(raw_data, form_type)
             except Exception as ai_exc:
                 logger.error("AI/OCR Extraction Pipeline Failed. Reason: %s", str(ai_exc))
@@ -130,6 +138,7 @@ class DocumentService:
                 "id": str(new_form_id),
                 "form_details": {"user_id": resolved_user_id, "filename": file.filename, "file_url": file_url},
                 "extracted_data": formatted_extracted_data,
+                "self_field_groups": self_field_groups,
                 "form_type": form_type,
                 "status": "success" if db_status == "Success" else "failed",
             }

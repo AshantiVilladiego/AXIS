@@ -28,6 +28,12 @@ class DocumentExtractionResponse(BaseModel):
     id: str  # <--- THE CRITICAL FIX: FastAPI will now allow the ID to pass through
     form_details: FormCreate
     extracted_data: List[ExtractedFieldCreate]
+    # Top-level group names (e.g. "registrant_name") that the AI tagged as
+    # describing the applicant themselves, as opposed to a relative's or
+    # beneficiary's field (father_name, mother_name, spouse_name, children,
+    # ...). Used by the frontend to stop profile auto-fill from bleeding
+    # onto e.g. father_name.lastname just because the leaf name matches.
+    self_field_groups: List[str] = Field(default_factory=list)
     # Echoes back the form_type the caller submitted (or the AI's
     # auto-detected type, once auto-detection exists) so the frontend can
     # show it without separately tracking request state.

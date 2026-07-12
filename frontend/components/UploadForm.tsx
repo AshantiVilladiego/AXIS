@@ -149,7 +149,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
         
         // 2. Fetch from the correct /api/v1/ endpoint structure
         // If your profile route is named differently in Swagger (/docs), update "/api/v1/profile" below:
-        const response = await fetch(`${API_BASE_URL}/profile`, { 
+        const response = await fetch(`${API_BASE_URL}/profile/`, { 
           headers: { 
             "Authorization": `Bearer ${session.access_token}`,
             "Content-Type": "application/json"
@@ -229,7 +229,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
         return; // Stop the function here
       }
 
-      const filledData = prepareMagicFillData(extracted, profileData);
+      const filledData = prepareMagicFillData(extracted, profileData, (uploadResult as any)?.self_field_groups || []);
 
       const rawMissing = filledData
         .filter(f => isEmptyish(f.text) && !f.isMagicFilled)
@@ -328,8 +328,18 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
     setIsChatSending(true);
     try {
       const history = chatMessages.map(m => ({ role: (m.role === 'bot' ? 'assistant' : 'user') as 'assistant' | 'user', text: m.text }));
-      const result = await sendChatMessage({ message: userText, language: language, model: 'gemini', formContext: { formId: formId || undefined }, history: history.slice(-6) });
+      // Leaf field names still blank, so free-chat answers can be matched
+      // to a real field the same way slot-filling questions already are.
+      // NOTE: must stay the FULL field_name (not leaf-stripped) — that's
+      // the exact key conversationalOverrides is read by in buildFinalData().
+      const missingFields = extractedFields
+        .filter(f => isEmptyish(f.text) && !conversationalOverrides[f.field_name])
+        .map(f => f.field_name);
+      const result = await sendChatMessage({ message: userText, language: language, model: 'gemini', formContext: { formId: formId || undefined }, history: history.slice(-6), missingFields });
       setChatMessages(prev => [...prev, { role: 'bot', text: result.reply, steps: result.steps }]);
+      if (result.fieldUpdates && Object.keys(result.fieldUpdates).length > 0) {
+        setConversationalOverrides(prev => ({ ...prev, ...result.fieldUpdates }));
+      }
     } catch (err) {
       setChatMessages(prev => [...prev, { role: 'bot', text: language === 'tl' ? "Pasensya na, may error sa server." : "Sorry, I had trouble reaching the AI engine." }]);
     } finally { setIsChatSending(false); }
@@ -397,7 +407,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
     } finally { setIsUploading(false); }
   };
 
-  const prepareMagicFillData = (fields: any[], profile: any): ExtractedField[] => {
+  const prepareMagicFillData = (fields: any[], profile: any, selfFieldGroups: string[]): ExtractedField[] => {
     const PROFILE_FIELD_MAP: Record<string, string> = {
       lastname: 'lastName', firstname: 'firstName', middlename: 'middleName', suffix: 'suffix',
       zipcode: 'zipCode', barangay: 'barangay', province: 'province', city: 'city', street: 'street',
@@ -405,10 +415,32 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
       birthdate: 'birthDate', emailaddress: 'email', civilstatus: 'civilStatus', sex: 'sex'
     };
 
+    // Top-level group before the first dot, with any array index stripped
+    // (e.g. "children[1].lastname" -> "children", "father_name.lastname" ->
+    // "father_name"). A field with no dot at all has no group — it's a bare
+    // top-level scalar.
+    const getTopLevelGroup = (fieldName: string): string | null => {
+      if (!fieldName.includes('.')) return null;
+      return fieldName.split('.')[0].replace(/\[\d+\]$/, '');
+    };
+
     const findProfileMatch = (fieldName: string): string | undefined => {
       const leaf = fieldName.includes('.') ? fieldName.split('.').pop()! : fieldName;
       const profileKey = PROFILE_FIELD_MAP[normalizeKey(leaf)];
-      return profileKey ? profile?.[profileKey] : undefined;
+      if (!profileKey) return undefined;
+
+      // Never let profile data bleed onto a relative's/beneficiary's field —
+      // "lastname" inside father_name/mother_maiden_name/spouse_name/children
+      // looks identical to the registrant's own "lastname" leaf, so the leaf
+      // name alone can't be trusted. Gate on the AI's per-upload tagging of
+      // which top-level groups are actually the registrant.
+      const topGroup = getTopLevelGroup(fieldName);
+      const isSelfGroup = topGroup === null
+        ? true // bare top-level field, no group to misattribute to someone else
+        : selfFieldGroups.some(g => g.toLowerCase() === topGroup.toLowerCase());
+      if (!isSelfGroup) return undefined;
+
+      return profile?.[profileKey];
     };
 
     const results: ExtractedField[] = [];
@@ -451,7 +483,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
 
   const buildFinalData = () => {
     if (!uploadResult) return [] as ExtractedField[];
-    const merged = prepareMagicFillData((uploadResult as any).extracted_data, profileData);
+    const merged = prepareMagicFillData((uploadResult as any).extracted_data, profileData, (uploadResult as any)?.self_field_groups || []);
     return merged.map(field => conversationalOverrides[field.field_name] ? { ...field, text: conversationalOverrides[field.field_name] } : field);
   };
 
