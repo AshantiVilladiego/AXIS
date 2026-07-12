@@ -124,7 +124,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { supabase } = useSupabase();
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
   useEffect(() => {
     if (!uploadResult && chatMessages.length <= 1) {

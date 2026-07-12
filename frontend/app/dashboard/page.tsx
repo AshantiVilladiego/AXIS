@@ -12,7 +12,7 @@ export default function Home() {
   const [apiStatus, setApiStatus] = useState('Checking connection...');
 
   useEffect(() => {
-    fetch('http://127.0.0.1:8000/api/health')
+    fetch('/api/health')
       .then((res) => res.json())
       .then((data) => {
         setApiStatus(data.message); 

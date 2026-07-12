@@ -21,7 +21,7 @@ export default function ProcessingHistory() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const { supabase } = useSupabase();
 
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
   const extractStoragePath = (fileUrl: string): string | null => {
     const marker = '/documents/';
