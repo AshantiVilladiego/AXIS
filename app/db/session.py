@@ -12,12 +12,13 @@ logger = logging.getLogger(__name__)
 
 
 def _build_engine_setup() -> tuple[URL, dict]:
-    """Build a validated connection URL + connect_args."""
+    """Build a validated connection URL + connect_args, respecting .env settings."""
     is_vercel = os.environ.get("VERCEL") == "1" or os.environ.get("NOW_REGION") is not None
     is_production = settings.environment.lower() == "production" or is_vercel
 
     raw = str(settings.database_url).strip()
 
+    # URL Normalization
     if raw.startswith("postgresql+asyncpg://"):
         normalized = raw
     elif raw.startswith("postgresql://"):
@@ -43,35 +44,24 @@ def _build_engine_setup() -> tuple[URL, dict]:
             f"(host={url.host!r}, port={url.port!r})."
         )
 
-    if is_production:
-        return url, {"ssl": _build_ssl_context()}
-
-    # Local development: same verified path by default. This bypass only
-    # fires if the env var is set as a real shell variable (not just in
-    # .env) AND we're not in production -- so it can never leak into prod.
-    if os.environ.get("DB_SSL_DIAGNOSTIC_DISABLE") == "1":
-        logger.warning(
-            "DB_SSL_DIAGNOSTIC_DISABLE=1 is set -- Postgres connection is "
-            "UNENCRYPTED. This should never be set outside local debugging."
-        )
+    # --- ADJUSTED LOGIC: RESPECT .env SETTINGS ---
+    # 1. If SSL verification is explicitly disabled in .env (DB_SSL_VERIFY=false), 
+    # disable SSL encryption entirely for the connection.
+    if not settings.db_ssl_verify:
+        logger.warning("DB_SSL_VERIFY=false detected: Postgres connection will be unencrypted.")
         return url, {"ssl": "disable"}
 
+    # 2. Diagnostic override (for local debugging only)
+    if os.environ.get("DB_SSL_DIAGNOSTIC_DISABLE") == "1":
+        logger.warning("DB_SSL_DIAGNOSTIC_DISABLE=1 is set -- Postgres connection is UNENCRYPTED.")
+        return url, {"ssl": "disable"}
+
+    # 3. Default to secure verification
     return url, {"ssl": _build_ssl_context()}
 
 
 def _build_ssl_context() -> ssl.SSLContext:
-    """Builds a verified SSL context trusting Supabase's own CA
-    (prod-ca-2021.crt). Both the direct-connection host and the pooler
-    chain up through Supabase's private CA hierarchy -- there is no
-    public CA involved, so certifi's bundle cannot verify this chain.
-
-    Supabase's CA cert is missing the keyUsage extension, which trips
-    Python 3.13's default VERIFY_X509_STRICT flag (new RFC 5280
-    enforcement). We clear only that one flag; everything else --
-    hostname matching, full chain validation, expiry -- stays enforced.
-    This is a narrow, documented compatibility exception, not a
-    reduction in overall verification.
-    """
+    """Builds a verified SSL context trusting Supabase's own CA."""
     ca_file = settings.db_ssl_ca_file or "certs/prod-ca-2021.crt"
 
     if not os.path.isfile(ca_file):
@@ -82,8 +72,6 @@ def _build_ssl_context() -> ssl.SSLContext:
 
     ctx = ssl.create_default_context(cafile=ca_file)
 
-    # Targeted compatibility fix for Supabase's CA cert (missing keyUsage
-    # extension), not a general verification bypass.
     if hasattr(ssl, "VERIFY_X509_STRICT"):
         ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
 
@@ -91,20 +79,15 @@ def _build_ssl_context() -> ssl.SSLContext:
 
 
 def _make_url_safely(url_string: str) -> URL:
-    """Thin wrapper around SQLAlchemy's URL parser so failures raise here,
-    with full context, instead of surfacing as a bare ValueError from deep
-    inside sqlalchemy/engine/url.py.
-    """
     return make_url(url_string)
 
 
+# --- INITIALIZATION ---
 DATABASE_URL, CONNECT_ARGS = _build_engine_setup()
 
-# --- THE PGBOUNCER FIX ---
 # Supabase uses PgBouncer on the pooler, which crashes if asyncpg tries to
 # cache statements. Disable statement caching in all environments.
 CONNECT_ARGS["statement_cache_size"] = 0
-# -------------------------
 
 engine = create_async_engine(
     DATABASE_URL,

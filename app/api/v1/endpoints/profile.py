@@ -139,21 +139,22 @@ async def upsert_profile(
                 :taxpayer_id, :sss_number, :philhealth_number, :pagibig_number)
         ON CONFLICT (id) DO UPDATE SET
             email = COALESCE(EXCLUDED.email, profiles.email),
-            first_name = COALESCE(EXCLUDED.first_name, profiles.first_name),
-            middle_name = COALESCE(EXCLUDED.middle_name, profiles.middle_name),
-            last_name = COALESCE(EXCLUDED.last_name, profiles.last_name),
-            suffix = COALESCE(EXCLUDED.suffix, profiles.suffix),
-            birth_date = COALESCE(EXCLUDED.birth_date, profiles.birth_date),
-            street = COALESCE(EXCLUDED.street, profiles.street),
-            barangay = COALESCE(EXCLUDED.barangay, profiles.barangay),
-            city = COALESCE(EXCLUDED.city, profiles.city),
-            province = COALESCE(EXCLUDED.province, profiles.province),
-            zip_code = COALESCE(EXCLUDED.zip_code, profiles.zip_code),
-            contact_number = COALESCE(EXCLUDED.contact_number, profiles.contact_number),
-            taxpayer_id = COALESCE(EXCLUDED.taxpayer_id, profiles.taxpayer_id),
-            sss_number = COALESCE(EXCLUDED.sss_number, profiles.sss_number),
-            philhealth_number = COALESCE(EXCLUDED.philhealth_number, profiles.philhealth_number),
-            pagibig_number = COALESCE(EXCLUDED.pagibig_number, profiles.pagibig_number)
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name,
+            -- Remove COALESCE so NULL/Empty values overwrite existing data
+            middle_name = EXCLUDED.middle_name,
+            suffix = EXCLUDED.suffix,
+            birth_date = EXCLUDED.birth_date,
+            street = EXCLUDED.street,
+            barangay = EXCLUDED.barangay,
+            city = EXCLUDED.city,
+            province = EXCLUDED.province,
+            zip_code = EXCLUDED.zip_code,
+            contact_number = EXCLUDED.contact_number,
+            taxpayer_id = EXCLUDED.taxpayer_id,
+            sss_number = EXCLUDED.sss_number,
+            philhealth_number = EXCLUDED.philhealth_number,
+            pagibig_number = EXCLUDED.pagibig_number
     """)
 
     try:
