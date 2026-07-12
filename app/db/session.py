@@ -60,24 +60,25 @@ def _build_engine_setup() -> tuple[URL, dict]:
 
 
 def _build_ssl_context() -> ssl.SSLContext:
-    """Builds a verified SSL context trusting Supabase's own CA."""
-    
-    # Dynamically resolve path: get the directory of the current file (session.py),
-    # move up to the project root, then down to 'certs/prod-ca-2021.crt'.
+    """Builds a verified SSL context trusting Supabase's CA."""
+    # Get the absolute path to the directory containing this file (session.py)
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
-    
-    # If settings.db_ssl_ca_file is set, use it; otherwise use the dynamic path
+
+    # Move up to the project root (adjusting based on how many folders deep session.py is)
+    # If session.py is in app/db/, we move up 2 levels to reach the root.
+    project_root = os.path.dirname(os.path.dirname(current_dir))
+
+    # Combine to form the absolute path to the certificate
     ca_file = settings.db_ssl_ca_file or os.path.join(project_root, 'certs', 'prod-ca-2021.crt')
 
     if not os.path.isfile(ca_file):
         raise FileNotFoundError(
-            f"Supabase CA file not found at {ca_file!r}. Verify it is in the project root."
+            f"Supabase CA file not found at '{ca_file}'. Please verify the path."
         )
 
     ctx = ssl.create_default_context(cafile=ca_file)
 
-    # Targeted compatibility fix for Supabase's CA cert
+    # Compatibility fix for Supabase CA
     if hasattr(ssl, "VERIFY_X509_STRICT"):
         ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
 
