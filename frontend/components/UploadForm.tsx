@@ -614,23 +614,27 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
   const extractedFields: ExtractedField[] = Array.isArray(uploadResult?.extracted_data) ? (uploadResult!.extracted_data as unknown as ExtractedField[]) : [];
 
   return (
-    <div className="flex flex-col gap-6 p-6 max-w-7xl mx-auto h-[calc(100vh-2rem)] min-h-[700px]">
-      <div className="flex items-center justify-between shrink-0">
+    <div className="flex flex-col gap-6">
+      <div className="pb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Document Ingestion</h1>
+          <h2 className="text-2xl font-bold tracking-tight text-slate-900">Document Ingestion</h2>
           <p className="text-sm text-slate-500 mt-1">Upload government forms for AI-powered extraction and auto-fill.</p>
         </div>
-        <div className={`px-3 py-1.5 border rounded-full flex items-center gap-2 ${isOffline ? "bg-red-50 border-red-200" : "bg-emerald-50 border-emerald-200"}`}>
+        <div className={`px-3 py-1.5 border rounded-full flex items-center gap-2 w-max ${isOffline ? "bg-red-50 border-red-200" : "bg-emerald-50 border-emerald-200"}`}>
           <div className={`w-2 h-2 rounded-full animate-pulse ${isOffline ? "bg-red-500" : "bg-emerald-500"}`}></div>
           <span className={`text-xs font-semibold uppercase tracking-wider ${isOffline ? "text-red-700" : "text-emerald-700"}`}>{apiStatus}</span>
         </div>
       </div>
 
-      {/* --- ALWAYS SHOW 2 COLUMNS --- */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
+      {/* --- ALWAYS SHOW 2 COLUMNS ---
+          Desktop: fills the available viewport height (no dead space, no page-level
+          scrollbar fighting the panel scroll). Mobile/tablet: no forced height at all —
+          each stacked panel sizes to its own content within a comfortable min/max and
+          scrolls internally, rather than being stretched or squashed by a shared height. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:h-[calc(100vh-230px)] lg:min-h-[550px]">
         
         {/* LEFT COLUMN: Upload Area OR Document Preview */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col min-h-0">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col min-h-[420px] max-h-[650px] lg:max-h-none lg:min-h-0">
           <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
               {!uploadResult ? "Upload Document" : "Document Preview"}
@@ -701,7 +705,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
         </div>
 
         {/* RIGHT COLUMN: A.X.I.S Assistant (Always Visible) */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col min-h-0">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col min-h-[420px] max-h-[650px] lg:max-h-none lg:min-h-0">
           <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
             <span className="text-xs font-semibold text-slate-700 flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-indigo-500"></span> A.X.I.S. Assistant
