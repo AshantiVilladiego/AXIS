@@ -91,6 +91,47 @@ function getFieldOptions(fieldName: string | null): string[] | null {
   return matchedKey ? FIELD_OPTIONS[matchedKey] : null;
 }
 
+// The chatbot only ever sent the bare leaf ("lastname") when asking about a
+// missing field, so "children[1].lastname" and "children[2].lastname" (and
+// the registrant's own "name.last_name") all produced the identical question
+// "What is your Last Name?" with no way to tell which person it meant. This
+// derives a human-readable question that names the group (and, for repeated
+// groups like children, the index) instead.
+const GROUP_PREFACES: Record<string, { tl: string; en: string }> = {
+  children: { tl: "anak", en: "child" },
+  child: { tl: "anak", en: "child" },
+  spouse_name: { tl: "asawa", en: "spouse" },
+  spouse: { tl: "asawa", en: "spouse" },
+  father_name: { tl: "ama", en: "father" },
+  father: { tl: "ama", en: "father" },
+  mother_name: { tl: "ina", en: "mother" },
+  mother: { tl: "ina", en: "mother" },
+  other_beneficiary: { tl: "beneficiary", en: "beneficiary" },
+  beneficiary: { tl: "beneficiary", en: "beneficiary" },
+};
+
+function formatContextualLabel(fieldName: string, lang: 'en' | 'tl'): string {
+  const parts = fieldName.split('.');
+  const leaf = parts.pop() ?? fieldName;
+  const label = formatLabel(leaf);
+  const groupRaw = parts[0] || '';
+
+  if (!groupRaw) {
+    return lang === 'tl' ? `Ano po ang inyong ${label}?` : `What is your ${label}?`;
+  }
+
+  const indexMatch = groupRaw.match(/\[(\d+)\]/);
+  const groupKey = groupRaw.replace(/\[\d+\]/, '').toLowerCase();
+  const preface = GROUP_PREFACES[groupKey] || { tl: groupKey.replace(/_/g, ' '), en: groupKey.replace(/_/g, ' ') };
+  const who = indexMatch
+    ? `${preface[lang]} #${indexMatch[1]}`
+    : preface[lang];
+
+  return lang === 'tl'
+    ? `Ano po ang ${label} ng inyong ${who}?`
+    : `What is the ${label} of your ${who}?`;
+}
+
 export default function UploadForm({ apiStatus = "Checking connection..." }: UploadFormProps) {
   const isOffline = apiStatus === "API Engine Offline" || apiStatus === "Checking connection...";
 
@@ -149,7 +190,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
         
         // 2. Fetch from the correct /api/v1/ endpoint structure
         // If your profile route is named differently in Swagger (/docs), update "/api/v1/profile" below:
-        const response = await fetch(`${API_BASE_URL}/profile/`, { 
+        const response = await fetch(`${API_BASE_URL}/profile`, { 
           headers: { 
             "Authorization": `Bearer ${session.access_token}`,
             "Content-Type": "application/json"
@@ -188,11 +229,16 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
     setCurrentFieldGuide(null);
     setCurrentFieldOptions(null);
 
-    // FIX: Only send the leaf node to the backend to prevent long JSON path questions
+    // Only send the leaf node as `field_name` (kept for backend compatibility
+    // — long JSON paths aren't useful to whatever prompts the backend's own
+    // question-generation), but also pass the full path as `field_path` so
+    // the backend has the option to disambiguate "which child/relative" too,
+    // and use the contextual label locally for the fallback question so it
+    // isn't ambiguous even when the backend call fails.
     const leafName = fieldName.includes('.') ? fieldName.split('.').pop()! : fieldName;
 
     const useFallback = () => {
-      setChatMessages(prev => [...prev, { role: 'bot', text: language === 'tl' ? `Ano po ang inyong ${formatLabel(leafName)}?` : `What is your ${formatLabel(leafName)}?` }]);
+      setChatMessages(prev => [...prev, { role: 'bot', text: formatContextualLabel(fieldName, language) }]);
       setCurrentFieldOptions(getFieldOptions(leafName));
     };
 
@@ -201,13 +247,13 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
       const response = await fetch(`${API_BASE_URL}/api/chatbot/field-question`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
-        body: JSON.stringify({ field_name: leafName, language: language, model: 'gemini', form_id: formId || undefined }),
+        body: JSON.stringify({ field_name: leafName, field_path: fieldName, language: language, model: 'gemini', form_id: formId || undefined }),
       });
 
       if (!response.ok) { useFallback(); return; }
 
       const result = await response.json();
-      const question: string = result?.reply?.trim() || (language === 'tl' ? `Ano po ang inyong ${formatLabel(leafName)}?` : `What is your ${formatLabel(leafName)}?`);
+      const question: string = result?.reply?.trim() || formatContextualLabel(fieldName, language);
       setChatMessages(prev => [...prev, { role: 'bot', text: question }]);
       setCurrentFieldGuide(result?.guide || null);
       setCurrentFieldOptions(Array.isArray(result?.options) && result.options.length > 0 ? result.options : getFieldOptions(leafName));
@@ -514,9 +560,15 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
       const { data: { session } } = await supabase.auth.getSession();
       
       const payloadArray = buildFinalData().map(f => {
-        const flatKey = f.field_name.includes('.') ? f.field_name.split('.').pop()! : f.field_name;
         const finalValue = editableData[f.field_name] !== undefined ? editableData[f.field_name] : f.text;
-        return { field_name: flatKey, text: isEmptyish(finalValue) ? null : finalValue };
+        // Send the full qualified path (e.g. "children[2].lastname"), not just
+        // the leaf. Collapsing to the leaf here discarded which group/array
+        // index a value belonged to before it ever reached the backend, which
+        // is why every "lastname" (registrant's, child 1's, child 2's, ...)
+        // looked identical to pdf_generator.py — it had no way to tell them
+        // apart. pdf_generator.py derives its own leaf internally for anchor
+        // lookup, so sending the full path here is backward compatible.
+        return { field_name: f.field_name, text: isEmptyish(finalValue) ? null : finalValue };
       });
 
       const generateFormData = new FormData();
