@@ -39,6 +39,7 @@ export async function middleware(request: NextRequest) {
   // Refresh session if expired - this ensures the user stays logged in
   const { data: { user } } = await supabase.auth.getUser()
 
+  const { data: { session } } = await supabase.auth.getSession();
   // Redirect logic:
   // 1. If user is NOT logged in and tries to access /dashboard, redirect to /login
   if (!session && request.nextUrl.pathname.startsWith('/dashboard')) {
