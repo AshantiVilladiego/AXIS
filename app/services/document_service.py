@@ -59,6 +59,63 @@ EXTRACTION_SCHEMA_REGISTRY: dict[str, type[BaseModel]] = {
     "sss": SSSExtractionSchema,
 }
 
+# --- CHECKBOX COLLAPSER ---
+# Safety net for when the model hallucinates a checkbox/radio field as an
+# object of options (e.g. {"Male": null, "Female": null}) instead of a plain
+# string. This must run BEFORE _flatten(), otherwise _flatten will happily
+# recurse into the bogus object and produce garbage keys like
+# "sex.Male": null, "sex.Female": null instead of a single "sex" field.
+#
+# Detection is shape-based rather than a hardcoded list of field names
+# (sex/civil_status/etc.), since checkbox-style fields vary a lot across form
+# types and a name list will always be a step behind whatever form shows up
+# next. A dict is treated as a checkbox-options object when every value is
+# either null, a boolean, an empty string, a recognized "checked" marker, or
+# equal to its own key — i.e. it looks like a set of mutually exclusive
+# options rather than a real sub-object with distinct field values (like an
+# address's street/city/zip, which will never look like this).
+_CHECKBOX_MARKERS = {"x", "true", "yes", "checked", "check", "on", "✓"}
+
+
+def _looks_like_checkbox_options(value: dict[str, Any]) -> bool:
+    # Require >=2 keys (a real checkbox/radio group always has multiple
+    # options) and require at least one actual "selected" signal. Without the
+    # signal requirement, a legitimately blank multi-field group (e.g. an
+    # entirely-unfilled spouse_name: {first_name: null, last_name: null, ...})
+    # would also satisfy "every value is null/bool/str" and get wiped out
+    # entirely, losing the field name along with it. We'd rather leave an
+    # ambiguous all-null object untouched than risk destroying real data.
+    if len(value) < 2 or not all(isinstance(v, (str, bool)) or v is None for v in value.values()):
+        return False
+    has_signal = False
+    for key, val in value.items():
+        if val is None:
+            continue
+        if isinstance(val, bool):
+            has_signal = has_signal or val
+            continue
+        val_norm = str(val).strip().lower()
+        if val_norm == "":
+            continue
+        if val_norm == str(key).strip().lower() or val_norm in _CHECKBOX_MARKERS:
+            has_signal = True
+            continue
+        return False
+    return has_signal
+
+
+def _collapse_checkbox_objects(value: Any) -> Any:
+    if isinstance(value, dict):
+        collapsed = {k: _collapse_checkbox_objects(v) for k, v in value.items()}
+        if _looks_like_checkbox_options(collapsed):
+            chosen = [k for k, v in collapsed.items() if v not in (None, False) and str(v).strip() != ""]
+            return chosen[0] if chosen else None
+        return collapsed
+    if isinstance(value, list):
+        return [_collapse_checkbox_objects(item) for item in value]
+    return value
+
+
 def _flatten(value: Any, prefix: str = "") -> dict[str, Any]:
     flat: dict[str, Any] = {}
     if isinstance(value, BaseModel): value = value.model_dump()
@@ -96,11 +153,20 @@ class DocumentService:
 
             db_status = "Success"
             ai_results = {}
+            self_field_groups: list[str] = []
 
             try:
                 extracted_data = await self.router.route_process_document(content, file.content_type)
                 normalized_data = self._normalize_extraction(extracted_data)
                 raw_data = normalized_data.get("data", {})
+                # Pulled out before validation/flattening so it's never treated
+                # as a real form field — this is metadata about the OTHER
+                # fields (which top-level groups are the registrant's own info
+                # vs. a relative's/beneficiary's), used by the frontend to
+                # stop profile auto-fill from bleeding onto e.g. father_name.
+                if isinstance(raw_data, dict):
+                    self_field_groups = raw_data.pop("_self_field_groups", []) or []
+                    raw_data = _collapse_checkbox_objects(raw_data)
                 ai_results = self._validate_extraction(raw_data, form_type)
             except Exception as ai_exc:
                 logger.error("AI/OCR Extraction Pipeline Failed. Reason: %s", str(ai_exc))
@@ -130,6 +196,7 @@ class DocumentService:
                 "id": str(new_form_id),
                 "form_details": {"user_id": resolved_user_id, "filename": file.filename, "file_url": file_url},
                 "extracted_data": formatted_extracted_data,
+                "self_field_groups": self_field_groups,
                 "form_type": form_type,
                 "status": "success" if db_status == "Success" else "failed",
             }

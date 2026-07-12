@@ -195,6 +195,18 @@ def _leaf_field(field_name: str) -> str:
     without_index = re.sub(r"\[\d+\]", "", field_name)
     return without_index.split(".")[-1] if "." in without_index else without_index
 
+def _row_index(field_name: str) -> int:
+    """1-based occurrence index for a repeated field like 'children[2].lastname'
+    -> 2, or 0 for a field with no array index (the registrant's own bare/
+    group fields, which are expected to be the first occurrence of a given
+    anchor text on the page). Used to disambiguate multiple fields that
+    normalize to the same leaf/anchor (e.g. registrant 'name.last_name' vs
+    'children[1].lastname' vs 'children[2].lastname' — all three leaf to
+    "lastname" and share the single "(LAST NAME)" anchor entry, so without
+    this they'd all compete for the anchor's first occurrence on the page)."""
+    match = re.search(r"\[(\d+)\]", field_name)
+    return int(match.group(1)) if match else 0
+
 class PDFGeneratorService:
     @staticmethod
     def fill_pdf(
@@ -311,7 +323,33 @@ class PDFGeneratorService:
                             rects = page.search_for(search_text, textpage=ocr_textpage)
 
                     if rects:
-                        anchor_rect = rects[0]
+                        # Fields that normalize to the same leaf/anchor (e.g.
+                        # registrant "name.last_name" and each
+                        # "children[N].lastname") all search for the same
+                        # anchor text and, on forms where that label is
+                        # printed once per row/section, will each turn up as
+                        # a separate entry in `rects` in top-to-bottom reading
+                        # order. Picking rects[0] unconditionally means every
+                        # such field competes for the very first occurrence —
+                        # the registrant's — and everything else silently
+                        # collides and gets skipped. Use the field's row index
+                        # (0 for unindexed/registrant fields) to pick the
+                        # matching occurrence instead, when there are enough.
+                        row_idx = _row_index(field_name) if not is_checkbox else 0
+                        if row_idx < len(rects):
+                            anchor_rect = rects[row_idx]
+                        else:
+                            logger.warning(
+                                f"Field '{field_name}' expected occurrence #{row_idx} of "
+                                f"anchor '{search_text}' but only {len(rects)} were found "
+                                f"on page {page_idx}. This anchor text is likely only "
+                                f"printed once on the form (not repeated per row), so this "
+                                f"field can't be positioned distinctly yet — falling back "
+                                f"to the first occurrence, which may collide with another "
+                                f"field and get skipped below. A table-header-relative "
+                                f"anchor is needed for this field to be placed correctly."
+                            )
+                            anchor_rect = rects[0]
 
                         if is_checkbox:
                             target_x = anchor_rect.x0 - CHECKBOX_MARK_OFFSET_X

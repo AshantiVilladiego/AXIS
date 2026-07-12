@@ -91,6 +91,47 @@ function getFieldOptions(fieldName: string | null): string[] | null {
   return matchedKey ? FIELD_OPTIONS[matchedKey] : null;
 }
 
+// The chatbot only ever sent the bare leaf ("lastname") when asking about a
+// missing field, so "children[1].lastname" and "children[2].lastname" (and
+// the registrant's own "name.last_name") all produced the identical question
+// "What is your Last Name?" with no way to tell which person it meant. This
+// derives a human-readable question that names the group (and, for repeated
+// groups like children, the index) instead.
+const GROUP_PREFACES: Record<string, { tl: string; en: string }> = {
+  children: { tl: "anak", en: "child" },
+  child: { tl: "anak", en: "child" },
+  spouse_name: { tl: "asawa", en: "spouse" },
+  spouse: { tl: "asawa", en: "spouse" },
+  father_name: { tl: "ama", en: "father" },
+  father: { tl: "ama", en: "father" },
+  mother_name: { tl: "ina", en: "mother" },
+  mother: { tl: "ina", en: "mother" },
+  other_beneficiary: { tl: "beneficiary", en: "beneficiary" },
+  beneficiary: { tl: "beneficiary", en: "beneficiary" },
+};
+
+function formatContextualLabel(fieldName: string, lang: 'en' | 'tl'): string {
+  const parts = fieldName.split('.');
+  const leaf = parts.pop() ?? fieldName;
+  const label = formatLabel(leaf);
+  const groupRaw = parts[0] || '';
+
+  if (!groupRaw) {
+    return lang === 'tl' ? `Ano po ang inyong ${label}?` : `What is your ${label}?`;
+  }
+
+  const indexMatch = groupRaw.match(/\[(\d+)\]/);
+  const groupKey = groupRaw.replace(/\[\d+\]/, '').toLowerCase();
+  const preface = GROUP_PREFACES[groupKey] || { tl: groupKey.replace(/_/g, ' '), en: groupKey.replace(/_/g, ' ') };
+  const who = indexMatch
+    ? `${preface[lang]} #${indexMatch[1]}`
+    : preface[lang];
+
+  return lang === 'tl'
+    ? `Ano po ang ${label} ng inyong ${who}?`
+    : `What is the ${label} of your ${who}?`;
+}
+
 export default function UploadForm({ apiStatus = "Checking connection..." }: UploadFormProps) {
   const isOffline = apiStatus === "API Engine Offline" || apiStatus === "Checking connection...";
 
@@ -188,11 +229,16 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
     setCurrentFieldGuide(null);
     setCurrentFieldOptions(null);
 
-    // FIX: Only send the leaf node to the backend to prevent long JSON path questions
+    // Only send the leaf node as `field_name` (kept for backend compatibility
+    // — long JSON paths aren't useful to whatever prompts the backend's own
+    // question-generation), but also pass the full path as `field_path` so
+    // the backend has the option to disambiguate "which child/relative" too,
+    // and use the contextual label locally for the fallback question so it
+    // isn't ambiguous even when the backend call fails.
     const leafName = fieldName.includes('.') ? fieldName.split('.').pop()! : fieldName;
 
     const useFallback = () => {
-      setChatMessages(prev => [...prev, { role: 'bot', text: language === 'tl' ? `Ano po ang inyong ${formatLabel(leafName)}?` : `What is your ${formatLabel(leafName)}?` }]);
+      setChatMessages(prev => [...prev, { role: 'bot', text: formatContextualLabel(fieldName, language) }]);
       setCurrentFieldOptions(getFieldOptions(leafName));
     };
 
@@ -201,13 +247,13 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
       const response = await fetch(`${API_BASE_URL}/api/chatbot/field-question`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
-        body: JSON.stringify({ field_name: leafName, language: language, model: 'gemini', form_id: formId || undefined }),
+        body: JSON.stringify({ field_name: leafName, field_path: fieldName, language: language, model: 'gemini', form_id: formId || undefined }),
       });
 
       if (!response.ok) { useFallback(); return; }
 
       const result = await response.json();
-      const question: string = result?.reply?.trim() || (language === 'tl' ? `Ano po ang inyong ${formatLabel(leafName)}?` : `What is your ${formatLabel(leafName)}?`);
+      const question: string = result?.reply?.trim() || formatContextualLabel(fieldName, language);
       setChatMessages(prev => [...prev, { role: 'bot', text: question }]);
       setCurrentFieldGuide(result?.guide || null);
       setCurrentFieldOptions(Array.isArray(result?.options) && result.options.length > 0 ? result.options : getFieldOptions(leafName));
@@ -229,7 +275,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
         return; // Stop the function here
       }
 
-      const filledData = prepareMagicFillData(extracted, profileData);
+      const filledData = prepareMagicFillData(extracted, profileData, (uploadResult as any)?.self_field_groups || []);
 
       const rawMissing = filledData
         .filter(f => isEmptyish(f.text) && !f.isMagicFilled)
@@ -328,8 +374,18 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
     setIsChatSending(true);
     try {
       const history = chatMessages.map(m => ({ role: (m.role === 'bot' ? 'assistant' : 'user') as 'assistant' | 'user', text: m.text }));
-      const result = await sendChatMessage({ message: userText, language: language, model: 'gemini', formContext: { formId: formId || undefined }, history: history.slice(-6) });
+      // Leaf field names still blank, so free-chat answers can be matched
+      // to a real field the same way slot-filling questions already are.
+      // NOTE: must stay the FULL field_name (not leaf-stripped) — that's
+      // the exact key conversationalOverrides is read by in buildFinalData().
+      const missingFields = extractedFields
+        .filter(f => isEmptyish(f.text) && !conversationalOverrides[f.field_name])
+        .map(f => f.field_name);
+      const result = await sendChatMessage({ message: userText, language: language, model: 'gemini', formContext: { formId: formId || undefined }, history: history.slice(-6), missingFields });
       setChatMessages(prev => [...prev, { role: 'bot', text: result.reply, steps: result.steps }]);
+      if (result.fieldUpdates && Object.keys(result.fieldUpdates).length > 0) {
+        setConversationalOverrides(prev => ({ ...prev, ...result.fieldUpdates }));
+      }
     } catch (err) {
       setChatMessages(prev => [...prev, { role: 'bot', text: language === 'tl' ? "Pasensya na, may error sa server." : "Sorry, I had trouble reaching the AI engine." }]);
     } finally { setIsChatSending(false); }
@@ -397,7 +453,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
     } finally { setIsUploading(false); }
   };
 
-  const prepareMagicFillData = (fields: any[], profile: any): ExtractedField[] => {
+  const prepareMagicFillData = (fields: any[], profile: any, selfFieldGroups: string[]): ExtractedField[] => {
     const PROFILE_FIELD_MAP: Record<string, string> = {
       lastname: 'lastName', firstname: 'firstName', middlename: 'middleName', suffix: 'suffix',
       zipcode: 'zipCode', barangay: 'barangay', province: 'province', city: 'city', street: 'street',
@@ -405,10 +461,32 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
       birthdate: 'birthDate', emailaddress: 'email', civilstatus: 'civilStatus', sex: 'sex'
     };
 
+    // Top-level group before the first dot, with any array index stripped
+    // (e.g. "children[1].lastname" -> "children", "father_name.lastname" ->
+    // "father_name"). A field with no dot at all has no group — it's a bare
+    // top-level scalar.
+    const getTopLevelGroup = (fieldName: string): string | null => {
+      if (!fieldName.includes('.')) return null;
+      return fieldName.split('.')[0].replace(/\[\d+\]$/, '');
+    };
+
     const findProfileMatch = (fieldName: string): string | undefined => {
       const leaf = fieldName.includes('.') ? fieldName.split('.').pop()! : fieldName;
       const profileKey = PROFILE_FIELD_MAP[normalizeKey(leaf)];
-      return profileKey ? profile?.[profileKey] : undefined;
+      if (!profileKey) return undefined;
+
+      // Never let profile data bleed onto a relative's/beneficiary's field —
+      // "lastname" inside father_name/mother_maiden_name/spouse_name/children
+      // looks identical to the registrant's own "lastname" leaf, so the leaf
+      // name alone can't be trusted. Gate on the AI's per-upload tagging of
+      // which top-level groups are actually the registrant.
+      const topGroup = getTopLevelGroup(fieldName);
+      const isSelfGroup = topGroup === null
+        ? true // bare top-level field, no group to misattribute to someone else
+        : selfFieldGroups.some(g => g.toLowerCase() === topGroup.toLowerCase());
+      if (!isSelfGroup) return undefined;
+
+      return profile?.[profileKey];
     };
 
     const results: ExtractedField[] = [];
@@ -451,7 +529,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
 
   const buildFinalData = () => {
     if (!uploadResult) return [] as ExtractedField[];
-    const merged = prepareMagicFillData((uploadResult as any).extracted_data, profileData);
+    const merged = prepareMagicFillData((uploadResult as any).extracted_data, profileData, (uploadResult as any)?.self_field_groups || []);
     return merged.map(field => conversationalOverrides[field.field_name] ? { ...field, text: conversationalOverrides[field.field_name] } : field);
   };
 
@@ -482,9 +560,15 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
       const { data: { session } } = await supabase.auth.getSession();
       
       const payloadArray = buildFinalData().map(f => {
-        const flatKey = f.field_name.includes('.') ? f.field_name.split('.').pop()! : f.field_name;
         const finalValue = editableData[f.field_name] !== undefined ? editableData[f.field_name] : f.text;
-        return { field_name: flatKey, text: isEmptyish(finalValue) ? null : finalValue };
+        // Send the full qualified path (e.g. "children[2].lastname"), not just
+        // the leaf. Collapsing to the leaf here discarded which group/array
+        // index a value belonged to before it ever reached the backend, which
+        // is why every "lastname" (registrant's, child 1's, child 2's, ...)
+        // looked identical to pdf_generator.py — it had no way to tell them
+        // apart. pdf_generator.py derives its own leaf internally for anchor
+        // lookup, so sending the full path here is backward compatible.
+        return { field_name: f.field_name, text: isEmptyish(finalValue) ? null : finalValue };
       });
 
       const generateFormData = new FormData();
@@ -530,23 +614,27 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
   const extractedFields: ExtractedField[] = Array.isArray(uploadResult?.extracted_data) ? (uploadResult!.extracted_data as unknown as ExtractedField[]) : [];
 
   return (
-    <div className="flex flex-col gap-6 p-6 max-w-7xl mx-auto h-[calc(100vh-2rem)] min-h-[700px]">
-      <div className="flex items-center justify-between shrink-0">
+    <div className="flex flex-col gap-6">
+      <div className="pb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Document Ingestion</h1>
+          <h2 className="text-2xl font-bold tracking-tight text-slate-900">Document Ingestion</h2>
           <p className="text-sm text-slate-500 mt-1">Upload government forms for AI-powered extraction and auto-fill.</p>
         </div>
-        <div className={`px-3 py-1.5 border rounded-full flex items-center gap-2 ${isOffline ? "bg-red-50 border-red-200" : "bg-emerald-50 border-emerald-200"}`}>
+        <div className={`px-3 py-1.5 border rounded-full flex items-center gap-2 w-max ${isOffline ? "bg-red-50 border-red-200" : "bg-emerald-50 border-emerald-200"}`}>
           <div className={`w-2 h-2 rounded-full animate-pulse ${isOffline ? "bg-red-500" : "bg-emerald-500"}`}></div>
           <span className={`text-xs font-semibold uppercase tracking-wider ${isOffline ? "text-red-700" : "text-emerald-700"}`}>{apiStatus}</span>
         </div>
       </div>
 
-      {/* --- ALWAYS SHOW 2 COLUMNS --- */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
+      {/* --- ALWAYS SHOW 2 COLUMNS ---
+          Desktop: fills the available viewport height (no dead space, no page-level
+          scrollbar fighting the panel scroll). Mobile/tablet: no forced height at all —
+          each stacked panel sizes to its own content within a comfortable min/max and
+          scrolls internally, rather than being stretched or squashed by a shared height. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:h-[calc(100vh-230px)] lg:min-h-[550px]">
         
         {/* LEFT COLUMN: Upload Area OR Document Preview */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col min-h-0">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col min-h-[420px] max-h-[650px] lg:max-h-none lg:min-h-0">
           <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
               {!uploadResult ? "Upload Document" : "Document Preview"}
@@ -617,7 +705,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
         </div>
 
         {/* RIGHT COLUMN: A.X.I.S Assistant (Always Visible) */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col min-h-0">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col min-h-[420px] max-h-[650px] lg:max-h-none lg:min-h-0">
           <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
             <span className="text-xs font-semibold text-slate-700 flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-indigo-500"></span> A.X.I.S. Assistant

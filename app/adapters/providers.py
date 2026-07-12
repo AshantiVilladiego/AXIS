@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import certifi # <--- ADD THIS
+import httpx
 from typing import Dict, Any, List
 
 # This forces all SSL requests to use the certifi bundle, which works everywhere
@@ -61,13 +62,41 @@ def _render_to_images(file_data: bytes, file_type: str, max_pages: int = 5) -> L
     raise ProviderUnavailableError(f"Unsupported file type for OCR: {file_type}")
 
 # --- THE FIX: Smart Grouping & Signature Omission ---
+# --- SYSTEM INSTRUCTION ---
+# Scoped to what actually helps a single-shot extraction call: reinforcing
+# "don't guess" and "strict JSON only". Deliberately does NOT include
+# conversational/chat framing (e.g. "ask the user for clarification", "decline
+# legal advice") since this is a one-shot document->JSON call with no back-
+# and-forth turn for the model to use, and inviting a conversational tone
+# risks the model prepending chatty text that breaks strict JSON parsing.
+SYSTEM_INSTRUCTION = (
+    "You are a precise data-extraction engine for Philippine government "
+    "forms. You extract exactly what is printed or marked on the document — "
+    "you never infer, guess, or fill in a plausible-looking value. If a "
+    "value is not clearly present or a checkbox is not clearly marked, "
+    "output null for that field rather than guessing. Your entire response "
+    "must be a single valid JSON object with no commentary, explanation, or "
+    "markdown before or after it."
+)
+
 EXTRACTION_PROMPT = (
     "Extract all fields from this document image into a single valid JSON object. "
     "CRITICAL INSTRUCTIONS:\n"
     "1. Do NOT extract physical signatures, thumbprints, or purely instructional text.\n"
     "2. Group names logically into objects (e.g., 'registrant_name', 'father_name', 'mother_name', 'spouse_name').\n"
     "3. Group repeating lists into arrays (e.g., 'children': [ {'last_name': '...', 'first_name': '...'} ]).\n"
-    "4. If a field is blank, set its value to null.\n"
+    "4. CHECKBOXES: Extract these as a single string matching the chosen option "
+    "(e.g., 'sex': 'Male'). NEVER extract checkboxes as objects like "
+    "{'Male': null, 'Female': null} — pick the option that is marked/checked and "
+    "return it as a plain string, or null if none is marked.\n"
+    "5. If a field is blank, set its value to null.\n"
+    "6. Add one extra top-level key, \"_self_field_groups\": an array listing the "
+    "exact group names from step 2 (and any other top-level group names you used) "
+    "that describe the APPLICANT/REGISTRANT who is filling out this form — NEVER "
+    "their father, mother, spouse, children, or other beneficiaries/dependents, "
+    "even if a group's fields look identical in shape (e.g., a 'last_name' inside "
+    "'father_name' is NOT a self field, but the one inside 'registrant_name' is). "
+    "This key must always be present, even if it's an empty array.\n"
     "Do not include markdown formatting or code blocks."
 )
 
@@ -90,7 +119,11 @@ class GeminiAdapter(ModelAdapter):
                     self.client.models.generate_content,
                     model=model_name,
                     contents=[EXTRACTION_PROMPT, types.Part.from_bytes(data=file_data, mime_type=file_type)],
-                    config=types.GenerateContentConfig(temperature=0, response_mime_type="application/json"),
+                    config=types.GenerateContentConfig(
+                        temperature=0,
+                        response_mime_type="application/json",
+                        system_instruction=SYSTEM_INSTRUCTION,
+                    ),
                 )
                 return {"provider": "gemini", "status": "success", "data": _parse_json_safely(response.text or "{}"), "model": model_name}
             except Exception as e:
@@ -116,7 +149,10 @@ class GroqAdapter(ModelAdapter):
         page_images = _render_to_images(file_data, file_type)
         model_candidates = ["llama-3.2-90b-vision-instruct", "llama-3.2-11b-vision-instruct"]
         image_content = [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64.b64encode(img).decode('utf-8')}"}} for img in page_images]
-        messages = [{"role": "user", "content": [{"type": "text", "text": EXTRACTION_PROMPT}] + image_content}]
+        messages = [
+            {"role": "system", "content": SYSTEM_INSTRUCTION},
+            {"role": "user", "content": [{"type": "text", "text": EXTRACTION_PROMPT}] + image_content},
+        ]
 
         last_error = None
         for model_name in model_candidates:
@@ -148,7 +184,10 @@ class HFAdapter(ModelAdapter):
         self._ensure_ready()
         page_images = _render_to_images(file_data, file_type)
         first_page_b64 = base64.b64encode(page_images[0]).decode("utf-8")
-        messages = [{"role": "user", "content": [{"type": "text", "text": EXTRACTION_PROMPT}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{first_page_b64}"}}]}]
+        messages = [
+            {"role": "system", "content": SYSTEM_INSTRUCTION},
+            {"role": "user", "content": [{"type": "text", "text": EXTRACTION_PROMPT}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{first_page_b64}"}}]},
+        ]
 
         try:
             response = await asyncio.to_thread(self.client.chat_completion, messages=messages, model="meta-llama/Llama-3.2-11B-Vision-Instruct", temperature=0)

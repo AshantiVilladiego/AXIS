@@ -63,11 +63,19 @@ class ChatMessageRequest(BaseModel):
     model: ChatModelProvider = "gemini"
     formContext: FormContextIn | None = None
     history: list[HistoryTurnIn] = Field(default_factory=list)
+    # field_names (leaf, e.g. "citymunicipality") still blank on the form.
+    # Without this the model has no way to tell "Quezon City" in free chat
+    # should map to a real field versus just being small talk.
+    missingFields: list[str] = Field(default_factory=list)
 
 class ChatMessageResponse(BaseModel):
     reply: str
     steps: list[str] | None = None
     modelUsed: ChatModelProvider | None = None
+    # {field_name: value} the user supplied in free chat, if any. The
+    # frontend should merge this into conversationalOverrides the same way
+    # it already does for slot-filling answers.
+    fieldUpdates: dict[str, str] | None = None
 
 class FieldQuestionRequest(BaseModel):
     field_name: str
@@ -92,11 +100,14 @@ async def send_chat_message(payload: ChatMessageRequest) -> ChatMessageResponse:
     try:
         result = await _service.get_reply(
             message=payload.message, language=payload.language, preferred_model=payload.model,
-            form_context=form_context, history=history,
+            form_context=form_context, history=history, missing_fields=payload.missingFields,
         )
     except ChatAdapterError as exc:
         raise HTTPException(status_code=502, detail="AI provider error.") from exc
-    return ChatMessageResponse(reply=result.reply, steps=result.steps or None, modelUsed=result.model_used)
+    return ChatMessageResponse(
+        reply=result.reply, steps=result.steps or None,
+        modelUsed=result.model_used, fieldUpdates=result.field_updates or None,
+    )
 
 @router.post("/field-question", response_model=FieldQuestionResponse)
 async def ask_about_field(payload: FieldQuestionRequest) -> FieldQuestionResponse:

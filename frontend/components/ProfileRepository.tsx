@@ -116,7 +116,7 @@ export default function ProfileRepository() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { setIsLoading(false); return; }
 
-      const response = await fetch(`${API_BASE_URL}/profile/`, {
+      const response = await fetch(`${API_BASE_URL}/profile`, {
         headers: { "Authorization": `Bearer ${session.access_token}` }
       });
 
