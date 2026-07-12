@@ -3,13 +3,25 @@ import base64
 import json
 import logging
 import os
+import certifi # <--- ADD THIS
 from typing import Dict, Any, List
+
+# This forces all SSL requests to use the certifi bundle, which works everywhere
+os.environ["SSL_CERT_FILE"] = certifi.where()
 
 from app.adapters.base import ModelAdapter
 from app.core.config import settings
 
 from google import genai
 from google.genai import types
+
+# --- NEW HELPER FUNCTION ---
+async def get_ai_client():
+    """Helper for manual HTTP calls that need SSL verification."""
+    return httpx.AsyncClient(
+        verify=certifi.where(), 
+        timeout=30.0
+    )
 
 logger = logging.getLogger(__name__)
 

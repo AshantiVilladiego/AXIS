@@ -149,7 +149,7 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
         
         // 2. Fetch from the correct /api/v1/ endpoint structure
         // If your profile route is named differently in Swagger (/docs), update "/api/v1/profile" below:
-        const response = await fetch(`${baseUrl}/api/v1/profile`, { 
+        const response = await fetch(`${API_BASE_URL}/profile`, { 
           headers: { 
             "Authorization": `Bearer ${session.access_token}`,
             "Content-Type": "application/json"
@@ -217,6 +217,18 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
   useEffect(() => {
     if (uploadResult?.extracted_data) {
       const extracted = uploadResult.extracted_data as any[];
+
+      // An empty array is still truthy, so without this check a failed/blank
+      // extraction sails straight through to "0 fields missing" below and
+      // gets reported as complete even though nothing was extracted.
+      // --- ADD THIS GUARD CLAUSE ---
+      if (extracted.length === 0) {
+        setChatMessages(prev => [...prev, { role: 'bot', text: language === 'tl' 
+          ? "⚠️ Walang nakuhang data. Pakisuri ang file o tingnan ang connection." 
+          : "⚠️ No data was extracted. Please check your file or connection." }]);
+        return; // Stop the function here
+      }
+
       const filledData = prepareMagicFillData(extracted, profileData);
 
       const rawMissing = filledData
@@ -252,11 +264,20 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
           }
       });
 
+      const hasAnyUsableData = filledData.some(f => !isEmptyish(f.text));
+
       if (uniqueMissing.length > 0) {
         setMissingFieldsQueue(uniqueMissing.slice(1)); 
         setCurrentAskingField(uniqueMissing[0]); 
         setChatMessages(prev => [...prev, { role: 'bot', text: language === 'tl' ? `Na-extract ko na ang dokumento. May konting kulang po para makumpleto.` : `Document extracted. I'm missing a few things to complete the form.` }]);
         askAboutField(uniqueMissing[0]);
+      } else if (!hasAnyUsableData) {
+        // Nothing is "missing" per the junk/concept filters, but nothing
+        // usable came out of extraction either (e.g. every field was junk-
+        // filtered or came back empty) — don't report this as complete.
+        setChatMessages(prev => [...prev, { role: 'bot', text: language === 'tl'
+          ? "⚠️ Walang nakuhang data mula sa dokumento. Pakisuri kung malinaw ang na-upload na file."
+          : "⚠️ No usable data could be extracted from this document. Please check that the uploaded file is clear and try again." }]);
       } else {
         setChatMessages(prev => [...prev, { role: 'bot', text: language === 'tl' ? "Kumpleto na! I-click ang 'Review & Download PDF'." : "All required fields are ready! Click 'Review & Download PDF' below." }]);
       }

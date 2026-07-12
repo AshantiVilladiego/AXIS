@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     supabase_anon_key: str | None = Field(default=None, alias="SUPABASE_ANON_KEY")
     supabase_jwt_secret: str | None = None
     
-    # Corrected: Defined once, mapping correctly to the env var
     supabase_service_role_key: str = Field(..., alias="SUPABASE_SERVICE_ROLE_KEY")
 
     cors_origins: list[str] = Field(
@@ -41,6 +40,9 @@ class Settings(BaseSettings):
 
     # Path to a CA bundle for database TLS connections
     db_ssl_ca_file: str | None = Field(default=None, alias="SSL_CERT_FILE")
+    
+    # ADDED: This ensures session.py can read DB_SSL_VERIFY from your .env
+    db_ssl_verify: bool = Field(default=True, alias="DB_SSL_VERIFY")
 
 
 @lru_cache

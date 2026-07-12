@@ -8,6 +8,7 @@ from app.api.v1.api import api_router
 from app.core.config import settings
 from app.services.fixed_prompts import get_fixed_answer
 
+
 # Initialize the application
 app = FastAPI(title=settings.app_name)
 
@@ -18,13 +19,15 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "https://axis-eight-navy.vercel.app"  # <--- FIXED: Removed trailing slash!
+        "http://localhost:8000",  # Defensive dev backup
+        "http://127.0.0.1:8000",  # Defensive dev backup
+        "https://axis-eight-navy.vercel.app",
+        "https://axis-backend-e80r.onrender.com"
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 app.include_router(api_router)
 app.include_router(chatbot.router)
 

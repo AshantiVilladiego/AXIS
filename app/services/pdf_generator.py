@@ -183,6 +183,10 @@ ANCHOR_MAPS["bir_1701_1701a"] = _BIR_1701A_ANCHORS
 
 CHECKBOX_MARK_OFFSET_X = 12
 CHECKBOX_MARK_OFFSET_Y = 0
+# Distance below the anchor label's bottom edge where free-text stamps land.
+# Bumped up from 14 to clear the printed underline/box border on most forms
+# with a bit more margin; per-field "dy" in ANCHOR_MAPS still overrides this.
+TEXT_STAMP_Y_OFFSET = 16
 
 def _normalize(key: str) -> str:
     return re.sub(r"[^a-z0-9]", "", key.lower())
@@ -317,7 +321,7 @@ class PDFGeneratorService:
                             )
                         else:
                             target_x = anchor_rect.x0
-                            target_y = anchor_rect.y1 + 14
+                            target_y = anchor_rect.y1 + TEXT_STAMP_Y_OFFSET
                             probe_rect = fitz.Rect(
                                 target_x, anchor_rect.y1, anchor_rect.x1, target_y + 12
                             )
@@ -331,10 +335,27 @@ class PDFGeneratorService:
                                 )
 
                         existing_text = page.get_text("text", clip=probe_rect).strip()
+
+                        # Some source PDFs (particularly ones that have already
+                        # been through an OCR pass or a prior fill) carry stray
+                        # non-whitespace artifacts in otherwise-empty regions —
+                        # zero-width characters, soft hyphens, stray control
+                        # chars — that .strip() won't remove since it only
+                        # strips whitespace. A single leftover character isn't
+                        # a real overlap risk, so treat length <= 1 as "empty"
+                        # and stamp anyway. Anything longer is treated as real
+                        # printed content and still skipped.
+                        if existing_text and len(existing_text) <= 1:
+                            logger.debug(
+                                f"Ignoring likely artifact in target area for '{field_name}': "
+                                f"{existing_text!r} (codepoints: {[hex(ord(c)) for c in existing_text]})"
+                            )
+                            existing_text = ""
+
                         if existing_text:
                             logger.warning(
-                                f"Skipped stamping '{field_name}': target area already "
-                                f"has content ('{existing_text[:30]}'), avoiding overlap."
+                                f"Skipped stamping '{field_name}': target area already has "
+                                f"content {existing_text!r} (len={len(existing_text)}), avoiding overlap."
                             )
                             skipped_fields.append(field_name)
                             stamped = True
