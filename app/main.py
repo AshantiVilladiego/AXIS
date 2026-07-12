@@ -1,20 +1,16 @@
+from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+
 from app.api.v1.endpoints import chatbot
 from app.api.v1.api import api_router
 from app.core.config import settings
 from app.services.fixed_prompts import get_fixed_answer
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1.api import api_router
-from app.core.config import settings
 
 # Initialize the application
 app = FastAPI(title=settings.app_name)
 
-# Configure CORS (Michael's Code - required for React frontend)
 # --- BULLETPROOF CORS CONFIGURATION ---
 # Hardcoding the local origins prevents Pydantic .env stringification bugs
 app.add_middleware(
@@ -22,7 +18,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "https://axis-eight-navy.vercel.app/" # <--- ADD YOUR VERCEL URL HERE
+        "https://axis-eight-navy.vercel.app"  # <--- FIXED: Removed trailing slash!
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -31,6 +27,7 @@ app.add_middleware(
 
 app.include_router(api_router)
 app.include_router(chatbot.router)
+
 
 # --- Chatbot Data Models ---
 class FixedPromptRequest(BaseModel):

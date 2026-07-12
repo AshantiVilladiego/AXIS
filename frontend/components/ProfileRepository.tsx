@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSupabase } from './providers/SupabaseProvider'; 
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 // Define the shape of our profile data.
 // NOTE: name and address are stored ATOMICALLY (separate fields) rather

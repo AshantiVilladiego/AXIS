@@ -8,7 +8,8 @@ class FormCreate(BaseModel):
     """Validates the core document data before hitting the 'forms' table."""
     user_id: UUID
     filename: str
-    file_url: HttpUrl # Pydantic strictly ensures this is a valid URL format
+    # CRITICAL FIX: Made Optional so deferred file uploads don't trigger a 500 ResponseValidationError
+    file_url: Optional[HttpUrl] = None 
     
 # --- 2. Extracted Field Schema ---
 class ExtractedFieldCreate(BaseModel):

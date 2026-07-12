@@ -143,13 +143,34 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) return;
-        const response = await fetch(`${API_BASE_URL}/profile/`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+
+        // 1. Ensure clean base URL without trailing slashes
+        const baseUrl = (API_BASE_URL || "").replace(/\/$/, "");
+        
+        // 2. Fetch from the correct /api/v1/ endpoint structure
+        // If your profile route is named differently in Swagger (/docs), update "/api/v1/profile" below:
+        const response = await fetch(`${baseUrl}/api/v1/profile`, { 
+          headers: { 
+            "Authorization": `Bearer ${session.access_token}`,
+            "Content-Type": "application/json"
+          } 
+        });
+
         if (response.ok) {
           const result = await response.json();
-          if (result.data && Object.keys(result.data).length > 0) setProfileData(result.data);
+          if (result.data && Object.keys(result.data).length > 0) {
+            setProfileData(result.data);
+          }
+        } else {
+          // Gracefully log non-200 responses without crashing the React component
+          console.warn(`[Profile Load] Endpoint returned status: ${response.status} (${response.statusText})`);
         }
-      } catch (err) { console.error("Could not load profile data:", err); }
+      } catch (err) { 
+        // Prevents unhandled network drops or CORS blocks from triggering "Failed to fetch"
+        console.error("[Profile Load] Network communication error:", err); 
+      }
     };
+
     fetchProfile();
   }, [supabase, API_BASE_URL]);
 
@@ -425,6 +446,14 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
     const targetId = formId || (uploadResult as any)?.id || uploadResult?.form_details?.id;
     if (!targetId) { alert("⚠️ Error: The Form ID is missing."); return; }
 
+    // The original file was never uploaded to storage during /api/upload —
+    // it only ever lived in memory on the backend for that one request. We
+    // keep it here in `selectedFile` for the whole review/edit flow, so this
+    // is the point where it has to be sent again: /generate needs the actual
+    // bytes to stamp onto, and it's also the only step that persists
+    // anything (the finished, stamped PDF) to storage.
+    if (!selectedFile) { alert("⚠️ Error: The original file is no longer available. Please re-upload."); return; }
+
     setIsGenerating(true);
     setChatMessages(prev => [...prev, { role: 'bot', text: language === 'tl' ? "Dino-download na ang inyong dokumento..." : "Stamping your data onto the document..." }]);
 
@@ -437,10 +466,16 @@ export default function UploadForm({ apiStatus = "Checking connection..." }: Upl
         return { field_name: flatKey, text: isEmptyish(finalValue) ? null : finalValue };
       });
 
+      const generateFormData = new FormData();
+      generateFormData.append('file', selectedFile);
+      generateFormData.append('mapping_data', JSON.stringify(payloadArray));
+
       const response = await fetch(`${API_BASE_URL}/api/${targetId}/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', "Authorization": `Bearer ${session?.access_token || ''}` },
-        body: JSON.stringify(payloadArray) 
+        // No Content-Type header here — the browser sets the correct
+        // multipart/form-data boundary automatically for FormData bodies.
+        headers: { "Authorization": `Bearer ${session?.access_token || ''}` },
+        body: generateFormData
       });
 
       if (!response.ok) throw new Error(`Backend Error ${response.status}: ${await response.text()}`);
